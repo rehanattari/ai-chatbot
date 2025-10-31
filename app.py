@@ -62,21 +62,47 @@ def init_database():
     conn = sqlite3.connect(str(DB_PATH))
     cursor = conn.cursor()
     
-    # Users table - create with all columns from start
-    cursor.execute("""
-        CREATE TABLE IF NOT EXISTS users (
-            user_id INTEGER PRIMARY KEY AUTOINCREMENT,
-            username TEXT UNIQUE NOT NULL,
-            display_name TEXT NOT NULL,
-            avatar_url TEXT,
-            email TEXT UNIQUE,
-            password_hash TEXT,
-            api_key TEXT,
-            is_active INTEGER DEFAULT 1,
-            last_login TIMESTAMP,
-            created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
-        )
-    """)
+    # Check if users table exists
+    cursor.execute("SELECT name FROM sqlite_master WHERE type='table' AND name='users'")
+    table_exists = cursor.fetchone() is not None
+    
+    if table_exists:
+        # Table exists, check and add missing columns
+        columns = get_table_columns(cursor, "users")
+        
+        migrations = [
+            ("email", "ALTER TABLE users ADD COLUMN email TEXT"),
+            ("password_hash", "ALTER TABLE users ADD COLUMN password_hash TEXT"),
+            ("api_key", "ALTER TABLE users ADD COLUMN api_key TEXT"),
+            ("is_active", "ALTER TABLE users ADD COLUMN is_active INTEGER DEFAULT 1"),
+            ("last_login", "ALTER TABLE users ADD COLUMN last_login TIMESTAMP"),
+        ]
+        
+        for column_name, sql in migrations:
+            if column_name not in columns:
+                try:
+                    cursor.execute(sql)
+                    conn.commit()
+                    print(f"✅ Added {column_name} column")
+                except sqlite3.OperationalError as e:
+                    print(f"⚠️ Error adding {column_name}: {e}")
+    else:
+        # Table doesn't exist, create with all columns
+        cursor.execute("""
+            CREATE TABLE users (
+                user_id INTEGER PRIMARY KEY AUTOINCREMENT,
+                username TEXT UNIQUE NOT NULL,
+                display_name TEXT NOT NULL,
+                avatar_url TEXT,
+                email TEXT,
+                password_hash TEXT,
+                api_key TEXT,
+                is_active INTEGER DEFAULT 1,
+                last_login TIMESTAMP,
+                created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+            )
+        """)
+        conn.commit()
     
     # Conversations table
     cursor.execute("""
@@ -118,26 +144,6 @@ def init_database():
     """)
     
     conn.commit()
-    
-    # Check and add missing columns to existing tables
-    columns = get_table_columns(cursor, "users")
-    
-    migrations = [
-        ("email", "ALTER TABLE users ADD COLUMN email TEXT UNIQUE"),
-        ("password_hash", "ALTER TABLE users ADD COLUMN password_hash TEXT"),
-        ("api_key", "ALTER TABLE users ADD COLUMN api_key TEXT"),
-        ("is_active", "ALTER TABLE users ADD COLUMN is_active INTEGER DEFAULT 1"),
-        ("last_login", "ALTER TABLE users ADD COLUMN last_login TIMESTAMP"),
-    ]
-    
-    for column_name, sql in migrations:
-        if column_name not in columns:
-            try:
-                cursor.execute(sql)
-                conn.commit()
-            except sqlite3.OperationalError:
-                pass
-    
     conn.close()
 
 # ========================================
@@ -180,10 +186,21 @@ def create_authenticated_user(username: str, email: str, display_name: str, pass
         avatar_url = f"https://api.dicebear.com/7.x/avataaars/svg?seed={avatar_seed}"
         password_hash = hash_password(password)
         
-        cursor.execute("""
-            INSERT INTO users (username, email, display_name, avatar_url, password_hash, is_active)
-            VALUES (?, ?, ?, ?, ?, 1)
-        """, (username, email, display_name, avatar_url, password_hash))
+        # Check which columns exist
+        columns = get_table_columns(cursor, "users")
+        
+        if "email" in columns and "password_hash" in columns and "is_active" in columns:
+            cursor.execute("""
+                INSERT INTO users (username, email, display_name, avatar_url, password_hash, is_active)
+                VALUES (?, ?, ?, ?, ?, 1)
+            """, (username, email, display_name, avatar_url, password_hash))
+        else:
+            # Fallback to basic columns
+            cursor.execute("""
+                INSERT INTO users (username, display_name, avatar_url)
+                VALUES (?, ?, ?)
+            """, (username, display_name, avatar_url))
+            st.warning("⚠️ Database schema incomplete. Please restart the app to apply migrations.")
         
         user_id = cursor.lastrowid
         
