@@ -44,70 +44,28 @@ DB_PATH.parent.mkdir(exist_ok=True)
 # DATABASE FUNCTIONS
 # ========================================
 
-def migrate_database():
-    """Add new columns to tables if they don't exist"""
-    conn = sqlite3.connect(str(DB_PATH))
-    cursor = conn.cursor()
-    
-    # Check users table columns
-    cursor.execute("PRAGMA table_info(users)")
-    columns = [column[1] for column in cursor.fetchall()]
-    
-    # Add api_key column if missing
-    if 'api_key' not in columns:
-        try:
-            cursor.execute("ALTER TABLE users ADD COLUMN api_key TEXT")
-            print("✅ Added api_key column")
-        except sqlite3.OperationalError:
-            pass
-    
-    # Add email column if missing
-    if 'email' not in columns:
-        try:
-            cursor.execute("ALTER TABLE users ADD COLUMN email TEXT UNIQUE")
-            print("✅ Added email column")
-        except sqlite3.OperationalError:
-            pass
-    
-    # Add password_hash column if missing
-    if 'password_hash' not in columns:
-        try:
-            cursor.execute("ALTER TABLE users ADD COLUMN password_hash TEXT")
-            print("✅ Added password_hash column")
-        except sqlite3.OperationalError:
-            pass
-    
-    # Add is_active column if missing
-    if 'is_active' not in columns:
-        try:
-            cursor.execute("ALTER TABLE users ADD COLUMN is_active INTEGER DEFAULT 1")
-            print("✅ Added is_active column")
-        except sqlite3.OperationalError:
-            pass
-    
-    # Add last_login column if missing
-    if 'last_login' not in columns:
-        try:
-            cursor.execute("ALTER TABLE users ADD COLUMN last_login TIMESTAMP")
-            print("✅ Added last_login column")
-        except sqlite3.OperationalError:
-            pass
-    
-    conn.commit()
-    conn.close()
+def get_table_columns(cursor, table_name: str) -> list:
+    """Get list of columns for a table"""
+    cursor.execute(f"PRAGMA table_info({table_name})")
+    return [column[1] for column in cursor.fetchall()]
 
 def init_database():
     """Initialize SQLite database with required tables"""
     conn = sqlite3.connect(str(DB_PATH))
     cursor = conn.cursor()
     
-    # Users table
+    # Users table - create with all columns from start
     cursor.execute("""
         CREATE TABLE IF NOT EXISTS users (
             user_id INTEGER PRIMARY KEY AUTOINCREMENT,
             username TEXT UNIQUE NOT NULL,
             display_name TEXT NOT NULL,
             avatar_url TEXT,
+            email TEXT UNIQUE,
+            password_hash TEXT,
+            api_key TEXT,
+            is_active INTEGER DEFAULT 1,
+            last_login TIMESTAMP,
             created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
         )
     """)
@@ -152,10 +110,28 @@ def init_database():
     """)
     
     conn.commit()
-    conn.close()
     
-    # Run migration to add new columns
-    migrate_database()
+    # Check and add missing columns to existing tables
+    columns = get_table_columns(cursor, "users")
+    
+    migrations = [
+        ("email", "ALTER TABLE users ADD COLUMN email TEXT UNIQUE"),
+        ("password_hash", "ALTER TABLE users ADD COLUMN password_hash TEXT"),
+        ("api_key", "ALTER TABLE users ADD COLUMN api_key TEXT"),
+        ("is_active", "ALTER TABLE users ADD COLUMN is_active INTEGER DEFAULT 1"),
+        ("last_login", "ALTER TABLE users ADD COLUMN last_login TIMESTAMP"),
+    ]
+    
+    for column_name, sql in migrations:
+        if column_name not in columns:
+            try:
+                cursor.execute(sql)
+                conn.commit()
+                print(f"✅ Added {column_name} column to users table")
+            except sqlite3.OperationalError as e:
+                print(f"⚠️ Column {column_name} migration: {e}")
+    
+    conn.close()
 
 # ========================================
 # AUTHENTICATION FUNCTIONS
@@ -169,7 +145,10 @@ def hash_password(password: str) -> str:
 
 def verify_password(password: str, password_hash: str) -> bool:
     """Verify a password against its hash"""
-    return bcrypt.checkpw(password.encode('utf-8'), password_hash.encode('utf-8'))
+    try:
+        return bcrypt.checkpw(password.encode('utf-8'), password_hash.encode('utf-8'))
+    except Exception:
+        return False
 
 def create_authenticated_user(username: str, email: str, display_name: str, password: str, avatar_seed: str = None) -> int:
     """Create a new user with authentication"""
@@ -200,7 +179,12 @@ def create_authenticated_user(username: str, email: str, display_name: str, pass
         return user_id
     except sqlite3.IntegrityError as e:
         print(f"User creation error: {e}")
+        conn.rollback()
         return -1
+    except Exception as e:
+        print(f"Unexpected error: {e}")
+        conn.rollback()
+        return -2
     finally:
         conn.close()
 
@@ -209,32 +193,35 @@ def authenticate_user(email: str, password: str) -> Optional[Dict]:
     conn = sqlite3.connect(str(DB_PATH))
     cursor = conn.cursor()
     
-    cursor.execute("""
-        SELECT user_id, username, email, display_name, avatar_url, password_hash, api_key, is_active
-        FROM users
-        WHERE email = ? AND is_active = 1
-    """, (email,))
-    
-    row = cursor.fetchone()
-    
-    if row and row[5]:  # Check if user exists and has password_hash
-        if verify_password(password, row[5]):
-            # Update last login
-            cursor.execute("""
-                UPDATE users SET last_login = CURRENT_TIMESTAMP WHERE user_id = ?
-            """, (row[0],))
-            conn.commit()
-            
-            user = {
-                "user_id": row[0],
-                "username": row[1],
-                "email": row[2],
-                "display_name": row[3],
-                "avatar_url": row[4],
-                "api_key": row[6]
-            }
-            conn.close()
-            return user
+    try:
+        cursor.execute("""
+            SELECT user_id, username, email, display_name, avatar_url, password_hash, api_key, is_active
+            FROM users
+            WHERE email = ? AND is_active = 1
+        """, (email,))
+        
+        row = cursor.fetchone()
+        
+        if row and row[5]:  # Check if user exists and has password_hash
+            if verify_password(password, row[5]):
+                # Update last login
+                cursor.execute("""
+                    UPDATE users SET last_login = CURRENT_TIMESTAMP WHERE user_id = ?
+                """, (row[0],))
+                conn.commit()
+                
+                user = {
+                    "user_id": row[0],
+                    "username": row[1],
+                    "email": row[2],
+                    "display_name": row[3],
+                    "avatar_url": row[4],
+                    "api_key": row[6]
+                }
+                conn.close()
+                return user
+    except Exception as e:
+        print(f"Authentication error: {e}")
     
     conn.close()
     return None
@@ -244,24 +231,29 @@ def get_user_by_id(user_id: int) -> Optional[Dict]:
     conn = sqlite3.connect(str(DB_PATH))
     cursor = conn.cursor()
     
-    cursor.execute("""
-        SELECT user_id, username, email, display_name, avatar_url, api_key
-        FROM users
-        WHERE user_id = ? AND is_active = 1
-    """, (user_id,))
+    try:
+        cursor.execute("""
+            SELECT user_id, username, email, display_name, avatar_url, api_key
+            FROM users
+            WHERE user_id = ? AND is_active = 1
+        """, (user_id,))
+        
+        row = cursor.fetchone()
+        
+        if row:
+            return {
+                "user_id": row[0],
+                "username": row[1],
+                "email": row[2],
+                "display_name": row[3],
+                "avatar_url": row[4],
+                "api_key": row[5]
+            }
+    except Exception as e:
+        print(f"Get user error: {e}")
+    finally:
+        conn.close()
     
-    row = cursor.fetchone()
-    conn.close()
-    
-    if row:
-        return {
-            "user_id": row[0],
-            "username": row[1],
-            "email": row[2],
-            "display_name": row[3],
-            "avatar_url": row[4],
-            "api_key": row[5]
-        }
     return None
 
 def update_user_api_key(user_id: int, api_key: str):
@@ -402,31 +394,56 @@ def get_user_settings(user_id: int) -> Dict:
             "verbosity": row[4],
             "stream_response": bool(row[5])
         }
-    return {}
+    return {
+        "system_prompt": "You are a helpful AI assistant.",
+        "temperature": 0.7,
+        "max_tokens": 2000,
+        "tone": "balanced",
+        "verbosity": "normal",
+        "stream_response": True
+    }
 
 def update_user_settings(user_id: int, settings: Dict):
     """Update user settings"""
     conn = sqlite3.connect(str(DB_PATH))
     cursor = conn.cursor()
     
-    cursor.execute("""
-        UPDATE settings
-        SET system_prompt = ?,
-            temperature = ?,
-            max_tokens = ?,
-            tone = ?,
-            verbosity = ?,
-            stream_response = ?
-        WHERE user_id = ?
-    """, (
-        settings["system_prompt"],
-        settings["temperature"],
-        settings["max_tokens"],
-        settings["tone"],
-        settings["verbosity"],
-        int(settings["stream_response"]),
-        user_id
-    ))
+    # Check if settings exist
+    cursor.execute("SELECT user_id FROM settings WHERE user_id = ?", (user_id,))
+    exists = cursor.fetchone()
+    
+    if exists:
+        cursor.execute("""
+            UPDATE settings
+            SET system_prompt = ?,
+                temperature = ?,
+                max_tokens = ?,
+                tone = ?,
+                verbosity = ?,
+                stream_response = ?
+            WHERE user_id = ?
+        """, (
+            settings["system_prompt"],
+            settings["temperature"],
+            settings["max_tokens"],
+            settings["tone"],
+            settings["verbosity"],
+            int(settings["stream_response"]),
+            user_id
+        ))
+    else:
+        cursor.execute("""
+            INSERT INTO settings (user_id, system_prompt, temperature, max_tokens, tone, verbosity, stream_response)
+            VALUES (?, ?, ?, ?, ?, ?, ?)
+        """, (
+            user_id,
+            settings["system_prompt"],
+            settings["temperature"],
+            settings["max_tokens"],
+            settings["tone"],
+            settings["verbosity"],
+            int(settings["stream_response"])
+        ))
     
     conn.commit()
     conn.close()
@@ -577,14 +594,18 @@ def render_signup():
                     st.error("Passwords do not match")
                 elif len(password) < 6:
                     st.error("Password must be at least 6 characters")
+                elif "@" not in email or "." not in email:
+                    st.error("Please enter a valid email address")
                 else:
                     user_id = create_authenticated_user(username, email, display_name, password)
                     if user_id > 0:
                         st.success("Account created! Please sign in.")
                         st.session_state.show_signup = False
                         st.rerun()
-                    else:
+                    elif user_id == -1:
                         st.error("Username or email already exists")
+                    else:
+                        st.error("An error occurred. Please try again.")
         
         with col_b:
             if st.button("← Back to Login", use_container_width=True):
@@ -946,7 +967,7 @@ def render_chat():
             ])
             
             # Show loading spinner
-            with st.spinner("Sagoma is processing request..."):
+            with st.spinner("🤖 Sagoma is processing request..."):
                 if settings.get("stream_response", True):
                     full_response = ""
                     for chunk in stream_ai_response(
