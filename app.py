@@ -1,5 +1,5 @@
 """
-Multi-Model AI Chatbot with Complete Authentication
+Multi-Model AI Chatbot with Complete Authentication and Custom Stitch Design
 Supports OpenAI, Claude, Gemini, Grok, and more via OpenRouter
 """
 
@@ -19,7 +19,6 @@ try:
 except ImportError:
     import hashlib
     BCRYPT_AVAILABLE = False
-    st.warning("⚠️ bcrypt not available, using fallback password hashing (less secure)")
 
 # ========================================
 # CONFIGURATION
@@ -30,26 +29,336 @@ OPENROUTER_ENDPOINT = "https://openrouter.ai/api/v1/chat/completions"
 
 # Available AI Models
 AVAILABLE_MODELS = {
-    "Claude Sonnet 3.5": "anthropic/claude-3.5-sonnet",
-    "GPT-4o": "openai/gpt-4o",
-    "GPT-4o Mini": "openai/gpt-4o-mini",
-    "Gemini Pro 1.5": "google/gemini-pro-1.5",
-    "Gemini Flash 1.5": "google/gemini-flash-1.5",
+    "Gemini": "google/gemini-flash-1.5",
+    "ChatGPT": "openai/gpt-4o-mini",
+    "Claude": "anthropic/claude-3.5-sonnet",
     "Llama 3.1 70B": "meta-llama/llama-3.1-70b-instruct",
-    "Llama 3.1 405B": "meta-llama/llama-3.1-405b-instruct",
     "DeepSeek V3": "deepseek/deepseek-chat",
-    "Mixtral 8x7B": "mistralai/mixtral-8x7b-instruct",
-    "Command R+": "cohere/command-r-plus",
 }
 
-DEFAULT_MODEL = "anthropic/claude-3.5-sonnet"
+DEFAULT_MODEL = "google/gemini-flash-1.5"
 
 # Database path
 DB_PATH = Path(__file__).parent / "database" / "conversations.db"
 DB_PATH.parent.mkdir(exist_ok=True)
 
 # ========================================
-# DATABASE FUNCTIONS
+# CUSTOM STITCH STYLING
+# ========================================
+
+def apply_stitch_design():
+    """Apply custom Stitch design CSS to Streamlit"""
+    st.markdown("""
+        <style>
+        @import url('https://fonts.googleapis.com/css2?family=Space+Grotesk:wght@400;500;700&display=swap');
+        @import url('https://fonts.googleapis.com/css2?family=Material+Symbols+Outlined');
+        
+        /* Global Styles */
+        * {
+            font-family: 'Space Grotesk', sans-serif !important;
+        }
+        
+        .stApp {
+            background-color: #f7f7f7;
+        }
+        
+        /* Dark mode */
+        @media (prefers-color-scheme: dark) {
+            .stApp {
+                background-color: #191919;
+            }
+        }
+        
+        /* Sidebar Styling */
+        [data-testid="stSidebar"] {
+            background-color: #f3f4f6 !important;
+            border-right: 1px solid #e5e7eb;
+        }
+        
+        @media (prefers-color-scheme: dark) {
+            [data-testid="stSidebar"] {
+                background-color: #151d2c !important;
+                border-right: 1px solid #232f48;
+            }
+        }
+        
+        /* Sidebar Header */
+        [data-testid="stSidebar"] h2 {
+            color: #111827;
+            font-size: 1.125rem;
+            font-weight: 700;
+            letter-spacing: -0.015em;
+        }
+        
+        @media (prefers-color-scheme: dark) {
+            [data-testid="stSidebar"] h2 {
+                color: white;
+            }
+        }
+        
+        /* New Chat Button */
+        [data-testid="stSidebar"] button[kind="primary"] {
+            background-color: #000000 !important;
+            color: white !important;
+            border-radius: 0.5rem !important;
+            font-weight: 700 !important;
+            padding: 0.5rem 1rem !important;
+            width: 100% !important;
+            margin-bottom: 1rem !important;
+        }
+        
+        /* Conversation Items in Sidebar */
+        [data-testid="stSidebar"] button[kind="secondary"] {
+            background-color: transparent !important;
+            color: #111827 !important;
+            border-radius: 0.5rem !important;
+            padding: 0.5rem !important;
+            text-align: left !important;
+            font-size: 0.875rem !important;
+            font-weight: 500 !important;
+            margin-bottom: 0.25rem !important;
+        }
+        
+        [data-testid="stSidebar"] button[kind="secondary"]:hover {
+            background-color: #e5e7eb !important;
+        }
+        
+        @media (prefers-color-scheme: dark) {
+            [data-testid="stSidebar"] button[kind="secondary"] {
+                color: white !important;
+            }
+            
+            [data-testid="stSidebar"] button[kind="secondary"]:hover {
+                background-color: #374151 !important;
+            }
+        }
+        
+        /* Main Header with Model Tabs */
+        .model-tabs {
+            display: flex;
+            justify-content: center;
+            gap: 0.5rem;
+            padding: 0.25rem;
+            background-color: #f3f4f6;
+            border-radius: 0.5rem;
+            margin-bottom: 1rem;
+        }
+        
+        @media (prefers-color-scheme: dark) {
+            .model-tabs {
+                background-color: #232f48;
+            }
+        }
+        
+        .model-tab {
+            padding: 0.25rem 0.75rem;
+            border-radius: 0.375rem;
+            font-size: 0.875rem;
+            font-weight: 500;
+            cursor: pointer;
+            color: #6b7280;
+            transition: all 0.2s;
+        }
+        
+        .model-tab.active {
+            background-color: #000000;
+            color: white;
+        }
+        
+        .model-tab:hover:not(.active) {
+            background-color: #e5e7eb;
+        }
+        
+        @media (prefers-color-scheme: dark) {
+            .model-tab {
+                color: #9ca3af;
+            }
+            
+            .model-tab:hover:not(.active) {
+                background-color: #374151;
+            }
+        }
+        
+        /* User Avatar in Header */
+        .user-avatar {
+            width: 2rem;
+            height: 2rem;
+            border-radius: 9999px;
+            background-size: cover;
+            background-position: center;
+            cursor: pointer;
+        }
+        
+        /* Chat Messages */
+        .stChatMessage {
+            padding: 1rem !important;
+            margin-bottom: 1rem !important;
+            border-radius: 0.5rem !important;
+        }
+        
+        /* User Message */
+        .stChatMessage[data-testid="user-message"] {
+            background-color: #000000 !important;
+            color: white !important;
+            margin-left: auto !important;
+            max-width: 70% !important;
+            border-radius: 0.75rem 0.75rem 0.25rem 0.75rem !important;
+        }
+        
+        /* AI Message */
+        .stChatMessage[data-testid="assistant-message"] {
+            background-color: #e5e7eb !important;
+            color: #111827 !important;
+            max-width: 70% !important;
+            border-radius: 0.75rem 0.75rem 0.75rem 0.25rem !important;
+        }
+        
+        @media (prefers-color-scheme: dark) {
+            .stChatMessage[data-testid="assistant-message"] {
+                background-color: #232f48 !important;
+                color: white !important;
+            }
+        }
+        
+        /* Chat Input */
+        .stChatInputContainer {
+            background-color: #e5e7eb !important;
+            border-radius: 0.75rem !important;
+            padding: 0.5rem !important;
+        }
+        
+        @media (prefers-color-scheme: dark) {
+            .stChatInputContainer {
+                background-color: #232f48 !important;
+            }
+        }
+        
+        .stChatInput input {
+            background-color: transparent !important;
+            border: none !important;
+            color: #111827 !important;
+            font-size: 1rem !important;
+        }
+        
+        @media (prefers-color-scheme: dark) {
+            .stChatInput input {
+                color: white !important;
+            }
+        }
+        
+        .stChatInput input::placeholder {
+            color: #6b7280 !important;
+        }
+        
+        @media (prefers-color-scheme: dark) {
+            .stChatInput input::placeholder {
+                color: #92a4c9 !important;
+            }
+        }
+        
+        /* Send Button */
+        .stChatInputContainer button {
+            background-color: #000000 !important;
+            color: white !important;
+            border-radius: 0.5rem !important;
+            padding: 0.5rem 1rem !important;
+            font-weight: 500 !important;
+        }
+        
+        /* Loading Animation (Typing Indicator) */
+        .typing-indicator {
+            display: flex;
+            gap: 0.5rem;
+            padding: 0.75rem 1rem;
+            background-color: #e5e7eb;
+            border-radius: 0.75rem;
+            width: fit-content;
+        }
+        
+        @media (prefers-color-scheme: dark) {
+            .typing-indicator {
+                background-color: #232f48;
+            }
+        }
+        
+        .typing-dot {
+            width: 0.5rem;
+            height: 0.5rem;
+            background-color: #000000;
+            border-radius: 9999px;
+            animation: pulse 1.4s ease-in-out infinite;
+        }
+        
+        .typing-dot:nth-child(2) {
+            animation-delay: 0.2s;
+        }
+        
+        .typing-dot:nth-child(3) {
+            animation-delay: 0.4s;
+        }
+        
+        @keyframes pulse {
+            0%, 60%, 100% {
+                opacity: 0.3;
+                transform: scale(0.8);
+            }
+            30% {
+                opacity: 1;
+                transform: scale(1);
+            }
+        }
+        
+        /* Welcome Message */
+        .welcome-message {
+            text-align: center;
+            color: #6b7280;
+            font-size: 0.875rem;
+            padding: 1rem;
+        }
+        
+        @media (prefers-color-scheme: dark) {
+            .welcome-message {
+                color: #9ca3af;
+            }
+        }
+        
+        /* Scrollbar Styling */
+        ::-webkit-scrollbar {
+            width: 8px;
+        }
+        
+        ::-webkit-scrollbar-track {
+            background: transparent;
+        }
+        
+        ::-webkit-scrollbar-thumb {
+            background: #d1d5db;
+            border-radius: 4px;
+        }
+        
+        ::-webkit-scrollbar-thumb:hover {
+            background: #9ca3af;
+        }
+        
+        @media (prefers-color-scheme: dark) {
+            ::-webkit-scrollbar-thumb {
+                background: #374151;
+            }
+            
+            ::-webkit-scrollbar-thumb:hover {
+                background: #4b5563;
+            }
+        }
+        
+        /* Hide Streamlit branding */
+        #MainMenu {visibility: hidden;}
+        footer {visibility: hidden;}
+        header {visibility: hidden;}
+        </style>
+    """, unsafe_allow_html=True)
+
+# ========================================
+# DATABASE FUNCTIONS (Keep existing functions)
 # ========================================
 
 def get_table_columns(cursor, table_name: str) -> list:
@@ -67,9 +376,7 @@ def init_database():
     table_exists = cursor.fetchone() is not None
     
     if table_exists:
-        # Table exists, check and add missing columns
         columns = get_table_columns(cursor, "users")
-        
         migrations = [
             ("email", "ALTER TABLE users ADD COLUMN email TEXT"),
             ("password_hash", "ALTER TABLE users ADD COLUMN password_hash TEXT"),
@@ -83,11 +390,9 @@ def init_database():
                 try:
                     cursor.execute(sql)
                     conn.commit()
-                    print(f"✅ Added {column_name} column")
-                except sqlite3.OperationalError as e:
-                    print(f"⚠️ Error adding {column_name}: {e}")
+                except sqlite3.OperationalError:
+                    pass
     else:
-        # Table doesn't exist, create with all columns
         cursor.execute("""
             CREATE TABLE users (
                 user_id INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -147,7 +452,7 @@ def init_database():
     conn.close()
 
 # ========================================
-# AUTHENTICATION FUNCTIONS
+# AUTHENTICATION FUNCTIONS (Keep existing)
 # ========================================
 
 def hash_password(password: str) -> str:
@@ -157,7 +462,6 @@ def hash_password(password: str) -> str:
         hashed = bcrypt.hashpw(password.encode('utf-8'), salt)
         return hashed.decode('utf-8')
     else:
-        # Fallback to sha256 (less secure but works without bcrypt)
         import hashlib
         return hashlib.sha256(password.encode('utf-8')).hexdigest()
 
@@ -167,11 +471,9 @@ def verify_password(password: str, password_hash: str) -> bool:
         if BCRYPT_AVAILABLE and password_hash.startswith('$2'):
             return bcrypt.checkpw(password.encode('utf-8'), password_hash.encode('utf-8'))
         else:
-            # Fallback verification
             import hashlib
             return hashlib.sha256(password.encode('utf-8')).hexdigest() == password_hash
-    except Exception as e:
-        st.error(f"Password verification error: {e}")
+    except Exception:
         return False
 
 def create_authenticated_user(username: str, email: str, display_name: str, password: str, avatar_seed: str = None) -> int:
@@ -186,7 +488,6 @@ def create_authenticated_user(username: str, email: str, display_name: str, pass
         avatar_url = f"https://api.dicebear.com/7.x/avataaars/svg?seed={avatar_seed}"
         password_hash = hash_password(password)
         
-        # Check which columns exist
         columns = get_table_columns(cursor, "users")
         
         if "email" in columns and "password_hash" in columns and "is_active" in columns:
@@ -195,16 +496,13 @@ def create_authenticated_user(username: str, email: str, display_name: str, pass
                 VALUES (?, ?, ?, ?, ?, 1)
             """, (username, email, display_name, avatar_url, password_hash))
         else:
-            # Fallback to basic columns
             cursor.execute("""
                 INSERT INTO users (username, display_name, avatar_url)
                 VALUES (?, ?, ?)
             """, (username, display_name, avatar_url))
-            st.warning("⚠️ Database schema incomplete. Please restart the app to apply migrations.")
         
         user_id = cursor.lastrowid
         
-        # Create default settings
         cursor.execute("""
             INSERT INTO settings (user_id, system_prompt)
             VALUES (?, ?)
@@ -222,8 +520,6 @@ def create_authenticated_user(username: str, email: str, display_name: str, pass
             st.error("Username already exists")
         elif "email" in error_msg:
             st.error("Email already exists")
-        else:
-            st.error(f"Database constraint error: {e}")
         return -1
         
     except Exception as e:
@@ -248,7 +544,6 @@ def authenticate_user(email: str, password: str) -> Optional[Dict]:
         
         if row and row[5]:
             if verify_password(password, row[5]):
-                # Update last login
                 cursor.execute("""
                     UPDATE users SET last_login = CURRENT_TIMESTAMP WHERE user_id = ?
                 """, (row[0],))
@@ -300,8 +595,7 @@ def get_user_by_id(user_id: int) -> Optional[Dict]:
             }
         return None
         
-    except Exception as e:
-        st.error(f"Get user error: {e}")
+    except Exception:
         return None
 
 def update_user_api_key(user_id: int, api_key: str):
@@ -322,7 +616,7 @@ def update_user_password(user_id: int, new_password: str):
     conn.close()
 
 # ========================================
-# CONVERSATION FUNCTIONS
+# CONVERSATION FUNCTIONS (Keep existing)
 # ========================================
 
 def get_user_conversations(user_id: int) -> List[Dict]:
@@ -402,7 +696,6 @@ def add_message(conversation_id: int, role: str, content: str):
         VALUES (?, ?, ?)
     """, (conversation_id, role, content))
     
-    # Update conversation timestamp
     cursor.execute("""
         UPDATE conversations
         SET updated_at = CURRENT_TIMESTAMP
@@ -448,7 +741,6 @@ def update_user_settings(user_id: int, settings: Dict):
     conn = sqlite3.connect(str(DB_PATH))
     cursor = conn.cursor()
     
-    # Check if settings exist
     cursor.execute("SELECT user_id FROM settings WHERE user_id = ?", (user_id,))
     exists = cursor.fetchone()
     
@@ -489,7 +781,7 @@ def update_user_settings(user_id: int, settings: Dict):
     conn.close()
 
 # ========================================
-# AI API FUNCTIONS
+# AI API FUNCTIONS (Keep existing)
 # ========================================
 
 def call_ai_model(messages: List[Dict], model: str, settings: Dict, api_key: str, stream: bool = True):
@@ -566,25 +858,17 @@ def stream_ai_response(messages: List[Dict], model: str, settings: Dict, api_key
 # ========================================
 
 def render_login():
-    """Render login page"""
+    """Render login page with Stitch styling"""
     st.markdown("""
-        <style>
-        .auth-container {
-            max-width: 400px;
-            margin: 100px auto;
-            padding: 40px;
-            border-radius: 10px;
-            box-shadow: 0 4px 6px rgba(0, 0, 0, 0.1);
-        }
-        </style>
+        <div style="max-width: 400px; margin: 100px auto; padding: 40px; border-radius: 10px; background: white; box-shadow: 0 4px 6px rgba(0,0,0,0.1);">
+            <h1 style="text-align: center; font-size: 2rem; font-weight: 700; margin-bottom: 0.5rem;">🤖 Sagoma AI</h1>
+            <h2 style="text-align: center; font-size: 1.5rem; color: #6b7280; margin-bottom: 2rem;">Sign In</h2>
+        </div>
     """, unsafe_allow_html=True)
     
     col1, col2, col3 = st.columns([1, 2, 1])
     
     with col2:
-        st.title("🤖 Sagoma AI")
-        st.subheader("Sign In")
-        
         email = st.text_input("Email", placeholder="your@email.com", key="login_email")
         password = st.text_input("Password", type="password", key="login_password")
         
@@ -611,12 +895,16 @@ def render_login():
                 st.rerun()
 
 def render_signup():
-    """Render signup page"""
+    """Render signup page with Stitch styling"""
     col1, col2, col3 = st.columns([1, 2, 1])
     
     with col2:
-        st.title("🤖 Sagoma AI")
-        st.subheader("Create Account")
+        st.markdown("""
+            <div style="text-align: center; margin-bottom: 2rem;">
+                <h1 style="font-size: 2rem; font-weight: 700; margin-bottom: 0.5rem;">🤖 Sagoma AI</h1>
+                <h2 style="font-size: 1.5rem; color: #6b7280;">Create Account</h2>
+            </div>
+        """, unsafe_allow_html=True)
         
         username = st.text_input("Username", placeholder="johndoe", key="signup_username")
         email = st.text_input("Email", placeholder="your@email.com", key="signup_email")
@@ -644,11 +932,6 @@ def render_signup():
                             st.balloons()
                             st.session_state.show_signup = False
                             st.rerun()
-                        elif user_id == -1:
-                            # Error already displayed by create_authenticated_user
-                            pass
-                        else:
-                            st.error("An unexpected error occurred. Please try again.")
         
         with col_b:
             if st.button("← Back to Login", use_container_width=True):
@@ -660,45 +943,49 @@ def render_signup():
 # ========================================
 
 def render_header():
-    """Render top header with user menu"""
-    col1, col2 = st.columns([4, 1])
+    """Render top header with model tabs and user avatar"""
+    # Model selector tabs
+    st.markdown('<div class="model-tabs">', unsafe_allow_html=True)
     
-    with col1:
-        st.title("🤖 Sagoma AI Chatbot")
+    cols = st.columns(len(AVAILABLE_MODELS) + 2)
     
-    with col2:
+    with cols[0]:
+        st.write("")  # Spacer
+    
+    for idx, (model_name, model_id) in enumerate(AVAILABLE_MODELS.items(), 1):
+        with cols[idx]:
+            active_class = "active" if st.session_state.selected_model == model_id else ""
+            if st.button(model_name, key=f"model_{model_name}", use_container_width=True):
+                st.session_state.selected_model = model_id
+                st.rerun()
+    
+    with cols[-1]:
         if st.session_state.authenticated and st.session_state.active_user:
             user = st.session_state.active_user
             
-            # User menu
-            st.markdown(f"""
-                <div style="text-align: right; padding: 10px;">
-                    <img src="{user['avatar_url']}" width="40" style="border-radius: 50%; vertical-align: middle;">
-                    <span style="margin-left: 10px; font-weight: bold;">{user['display_name']}</span>
-                </div>
-            """, unsafe_allow_html=True)
-            
-            # Dropdown menu
-            menu_col1, menu_col2, menu_col3 = st.columns(3)
-            
-            with menu_col1:
-                if st.button("⚙️", key="settings_header", help="Settings"):
+            # User avatar with dropdown
+            with st.popover("👤", use_container_width=False):
+                st.markdown(f"**{user['display_name']}**")
+                st.markdown(f"*{user.get('email', 'N/A')}*")
+                st.divider()
+                
+                if st.button("⚙️ Settings", use_container_width=True):
                     st.session_state.show_settings = True
                     st.rerun()
-            
-            with menu_col2:
-                if st.button("🔑", key="api_key_header", help="API Key"):
+                
+                if st.button("🔑 API Key", use_container_width=True):
                     st.session_state.show_api_key_modal = True
                     st.rerun()
-            
-            with menu_col3:
-                if st.button("🚪", key="logout_header", help="Logout"):
+                
+                if st.button("🚪 Logout", use_container_width=True):
                     st.session_state.authenticated = False
                     st.session_state.user_id = None
                     st.session_state.active_user = None
                     st.session_state.current_conversation = None
                     st.session_state.messages = []
                     st.rerun()
+    
+    st.markdown('</div>', unsafe_allow_html=True)
 
 def render_api_key_setup():
     """Render API key setup screen"""
@@ -746,27 +1033,22 @@ def render_api_key_setup():
                 st.rerun()
             else:
                 st.error("Please enter a valid OpenRouter API key (starts with 'sk-or-')")
-    
-    with col2:
-        if st.button("ℹ️ More Info", use_container_width=True):
-            st.info("""
-            **OpenRouter Pricing:**
-            - GPT-4o Mini: ~$0.15 per 1M tokens
-            - Claude 3.5 Sonnet: ~$3 per 1M tokens
-            - Gemini Flash: ~$0.075 per 1M tokens
-            
-            **Example costs:**
-            - 100 conversations ≈ $0.50 - $2.00
-            - Most users spend <$5/month
-            """)
 
 def render_sidebar():
     """Render the sidebar with conversation history"""
     with st.sidebar:
-        st.title("💬 Chat History")
+        # Header with logo
+        st.markdown("""
+            <div style="display: flex; align-items: center; gap: 1rem; margin-bottom: 1.5rem;">
+                <svg width="24" height="24" viewBox="0 0 48 48" fill="none" xmlns="http://www.w3.org/2000/svg">
+                    <path d="M24 4C25.7818 14.2173 33.7827 22.2182 44 24C33.7827 25.7818 25.7818 33.7827 24 44C22.2182 33.7827 14.2173 25.7818 4 24C14.2173 22.2182 22.2182 14.2173 24 4Z" fill="currentColor"/>
+                </svg>
+                <h2 style="font-size: 1.125rem; font-weight: 700; margin: 0;">AI Chat</h2>
+            </div>
+        """, unsafe_allow_html=True)
         
         # New chat button
-        if st.button("➕ New Chat", use_container_width=True, type="primary"):
+        if st.button("➕ New Chat", type="primary", use_container_width=True):
             st.session_state.current_conversation = None
             st.session_state.messages = []
             st.rerun()
@@ -774,7 +1056,7 @@ def render_sidebar():
         st.divider()
         
         # Search conversations
-        search_term = st.text_input("🔍 Search conversations", key="search_conv")
+        search_term = st.text_input("🔍 Search", key="search_conv", label_visibility="collapsed")
         
         # Display conversations
         if st.session_state.authenticated and st.session_state.active_user:
@@ -783,22 +1065,35 @@ def render_sidebar():
             if search_term:
                 conversations = [c for c in conversations if search_term.lower() in c["title"].lower()]
             
-            if conversations:
-                for conv in conversations:
+            # Group conversations by date
+            today = []
+            yesterday = []
+            older = []
+            
+            from datetime import datetime, timedelta
+            now = datetime.now()
+            
+            for conv in conversations:
+                conv_date = datetime.fromisoformat(conv["updated_at"])
+                if conv_date.date() == now.date():
+                    today.append(conv)
+                elif conv_date.date() == (now - timedelta(days=1)).date():
+                    yesterday.append(conv)
+                else:
+                    older.append(conv)
+            
+            # Display Today
+            if today:
+                st.markdown('<p style="color: #6b7280; font-size: 0.75rem; font-weight: 500; text-transform: uppercase; padding: 0.5rem 0;">Today</p>', unsafe_allow_html=True)
+                for conv in today:
                     col1, col2 = st.columns([5, 1])
-                    
                     with col1:
                         title_display = conv['title'][:30] + "..." if len(conv['title']) > 30 else conv['title']
-                        if st.button(
-                            f"💬 {title_display}",
-                            key=f"conv_{conv['conversation_id']}",
-                            use_container_width=True
-                        ):
+                        if st.button(f"💬 {title_display}", key=f"conv_{conv['conversation_id']}", use_container_width=True):
                             st.session_state.current_conversation = conv
                             st.session_state.messages = get_conversation_messages(conv["conversation_id"])
                             st.session_state.selected_model = conv["model"]
                             st.rerun()
-                    
                     with col2:
                         if st.button("🗑️", key=f"del_{conv['conversation_id']}"):
                             delete_conversation(conv["conversation_id"])
@@ -807,8 +1102,51 @@ def render_sidebar():
                                 st.session_state.current_conversation = None
                                 st.session_state.messages = []
                             st.rerun()
-            else:
-                st.info("No conversations yet. Start a new chat!")
+            
+            # Display Yesterday
+            if yesterday:
+                st.markdown('<p style="color: #6b7280; font-size: 0.75rem; font-weight: 500; text-transform: uppercase; padding: 0.5rem 0;">Yesterday</p>', unsafe_allow_html=True)
+                for conv in yesterday:
+                    col1, col2 = st.columns([5, 1])
+                    with col1:
+                        title_display = conv['title'][:30] + "..." if len(conv['title']) > 30 else conv['title']
+                        if st.button(f"💬 {title_display}", key=f"conv_{conv['conversation_id']}", use_container_width=True):
+                            st.session_state.current_conversation = conv
+                            st.session_state.messages = get_conversation_messages(conv["conversation_id"])
+                            st.session_state.selected_model = conv["model"]
+                            st.rerun()
+                    with col2:
+                        if st.button("🗑️", key=f"del_{conv['conversation_id']}"):
+                            delete_conversation(conv["conversation_id"])
+                            if st.session_state.current_conversation and \
+                               st.session_state.current_conversation["conversation_id"] == conv["conversation_id"]:
+                                st.session_state.current_conversation = None
+                                st.session_state.messages = []
+                            st.rerun()
+            
+            # Display Older
+            if older:
+                st.markdown('<p style="color: #6b7280; font-size: 0.75rem; font-weight: 500; text-transform: uppercase; padding: 0.5rem 0;">Older</p>', unsafe_allow_html=True)
+                for conv in older:
+                    col1, col2 = st.columns([5, 1])
+                    with col1:
+                        title_display = conv['title'][:30] + "..." if len(conv['title']) > 30 else conv['title']
+                        if st.button(f"💬 {title_display}", key=f"conv_{conv['conversation_id']}", use_container_width=True):
+                            st.session_state.current_conversation = conv
+                            st.session_state.messages = get_conversation_messages(conv["conversation_id"])
+                            st.session_state.selected_model = conv["model"]
+                            st.rerun()
+                    with col2:
+                        if st.button("🗑️", key=f"del_{conv['conversation_id']}"):
+                            delete_conversation(conv["conversation_id"])
+                            if st.session_state.current_conversation and \
+                               st.session_state.current_conversation["conversation_id"] == conv["conversation_id"]:
+                                st.session_state.current_conversation = None
+                                st.session_state.messages = []
+                            st.rerun()
+            
+            if not (today or yesterday or older):
+                st.markdown('<p class="welcome-message">No conversations yet. Start a new chat!</p>', unsafe_allow_html=True)
 
 def render_settings():
     """Render settings modal"""
@@ -820,15 +1158,13 @@ def render_settings():
         
         tabs = st.tabs(["Chat Behavior", "Account Security"])
         
-        # Chat Behavior Tab
         with tabs[0]:
             st.subheader("🤖 Chatbot Customization")
             
             new_system_prompt = st.text_area(
                 "System Prompt",
                 value=settings.get("system_prompt", "You are a helpful AI assistant."),
-                height=150,
-                help="Define how the AI should behave"
+                height=150
             )
             
             col1, col2 = st.columns(2)
@@ -839,8 +1175,7 @@ def render_settings():
                     min_value=0.0,
                     max_value=2.0,
                     value=settings.get("temperature", 0.7),
-                    step=0.1,
-                    help="Controls randomness. Higher = more creative"
+                    step=0.1
                 )
                 
                 new_tone = st.selectbox(
@@ -857,8 +1192,7 @@ def render_settings():
                     min_value=100,
                     max_value=4000,
                     value=settings.get("max_tokens", 2000),
-                    step=100,
-                    help="Maximum response length"
+                    step=100
                 )
                 
                 new_verbosity = st.selectbox(
@@ -871,11 +1205,10 @@ def render_settings():
             
             new_stream = st.checkbox(
                 "Stream responses",
-                value=settings.get("stream_response", True),
-                help="Show responses as they're generated"
+                value=settings.get("stream_response", True)
             )
             
-            if st.button("💾 Save Chat Settings", type="primary"):
+            if st.button("💾 Save Settings", type="primary"):
                 update_user_settings(user_id, {
                     "system_prompt": new_system_prompt,
                     "temperature": new_temperature,
@@ -887,7 +1220,6 @@ def render_settings():
                 st.success("Settings saved!")
                 st.rerun()
         
-        # Account Security Tab
         with tabs[1]:
             st.subheader("🔒 Account Security")
             
@@ -912,7 +1244,6 @@ def render_settings():
                 elif len(new_password) < 6:
                     st.error("Password must be at least 6 characters")
                 else:
-                    # Verify current password
                     if authenticate_user(user['email'], current_password):
                         update_user_password(user_id, new_password)
                         st.success("Password updated successfully!")
@@ -926,7 +1257,7 @@ def render_settings():
             st.rerun()
 
 def render_chat():
-    """Render main chat interface"""
+    """Render main chat interface with Stitch design"""
     # Check if API key is configured
     if not st.session_state.active_user.get("api_key"):
         if st.session_state.show_api_key_modal:
@@ -944,27 +1275,9 @@ def render_chat():
         render_api_key_setup()
         return
     
-    # Model selector
-    col1, col2 = st.columns([3, 1])
-    
-    with col1:
-        model_display_names = list(AVAILABLE_MODELS.keys())
-        model_values = list(AVAILABLE_MODELS.values())
-        
-        current_index = model_values.index(st.session_state.selected_model) if st.session_state.selected_model in model_values else 0
-        
-        selected_display = st.selectbox(
-            "Select AI Model",
-            options=model_display_names,
-            index=current_index,
-            key="model_selector"
-        )
-        st.session_state.selected_model = AVAILABLE_MODELS[selected_display]
-    
-    with col2:
-        st.info(f"**Active**")
-    
-    st.divider()
+    # Welcome message if no messages
+    if not st.session_state.messages:
+        st.markdown('<p class="welcome-message">Welcome! Ask me anything.</p>', unsafe_allow_html=True)
     
     # Display chat messages
     for message in st.session_state.messages:
@@ -973,7 +1286,6 @@ def render_chat():
     
     # Chat input
     if prompt := st.chat_input("Type your message here..."):
-        # Get settings
         settings = get_user_settings(st.session_state.active_user["user_id"])
         api_key = st.session_state.active_user["api_key"]
         
@@ -1002,6 +1314,15 @@ def render_chat():
         with st.chat_message("assistant"):
             message_placeholder = st.empty()
             
+            # Show typing indicator
+            message_placeholder.markdown("""
+                <div class="typing-indicator">
+                    <div class="typing-dot"></div>
+                    <div class="typing-dot"></div>
+                    <div class="typing-dot"></div>
+                </div>
+            """, unsafe_allow_html=True)
+            
             # Prepare messages for API
             api_messages = [{"role": "system", "content": settings.get("system_prompt", "You are a helpful AI assistant.")}]
             api_messages.extend([
@@ -1009,37 +1330,33 @@ def render_chat():
                 for m in st.session_state.messages
             ])
             
-            # Show loading spinner
-            with st.spinner("🤖 Sagoma is processing request..."):
-                if settings.get("stream_response", True):
-                    full_response = ""
-                    for chunk in stream_ai_response(
-                        api_messages,
-                        st.session_state.selected_model,
-                        settings,
-                        api_key
-                    ):
-                        full_response += chunk
-                        message_placeholder.markdown(full_response + "▌")
-                    
+            if settings.get("stream_response", True):
+                full_response = ""
+                for chunk in stream_ai_response(
+                    api_messages,
+                    st.session_state.selected_model,
+                    settings,
+                    api_key
+                ):
+                    full_response += chunk
+                    message_placeholder.markdown(full_response + "▌")
+                
+                message_placeholder.markdown(full_response)
+            else:
+                full_response = call_ai_model(
+                    api_messages,
+                    st.session_state.selected_model,
+                    settings,
+                    api_key,
+                    stream=False
+                )
+                if full_response:
                     message_placeholder.markdown(full_response)
-                else:
-                    full_response = call_ai_model(
-                        api_messages,
-                        st.session_state.selected_model,
-                        settings,
-                        api_key,
-                        stream=False
-                    )
-                    if full_response:
-                        message_placeholder.markdown(full_response)
             
             # Save assistant message
             if full_response:
                 st.session_state.messages.append({"role": "assistant", "content": full_response})
                 add_message(st.session_state.current_conversation["conversation_id"], "assistant", full_response)
-                
-                # Trigger sidebar refresh to show new conversation
                 st.rerun()
 
 # ========================================
@@ -1053,6 +1370,9 @@ def main():
         layout="wide",
         initial_sidebar_state="expanded"
     )
+    
+    # Apply custom Stitch design
+    apply_stitch_design()
     
     # Initialize database
     init_database()
