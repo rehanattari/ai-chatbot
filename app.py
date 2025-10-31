@@ -1,5 +1,5 @@
 """
-Multi-Model AI Chatbot with Conversation History
+Multi-Model AI Chatbot with Complete Authentication
 Supports OpenAI, Claude, Gemini, Grok, and more via OpenRouter
 """
 
@@ -7,6 +7,7 @@ import streamlit as st
 import sqlite3
 import json
 import requests
+import bcrypt
 from datetime import datetime
 from typing import List, Dict, Optional
 import os
@@ -44,22 +45,55 @@ DB_PATH.parent.mkdir(exist_ok=True)
 # ========================================
 
 def migrate_database():
-    """Add api_key column to users table if it doesn't exist"""
+    """Add new columns to tables if they don't exist"""
     conn = sqlite3.connect(str(DB_PATH))
     cursor = conn.cursor()
     
-    # Check if api_key column exists
+    # Check users table columns
     cursor.execute("PRAGMA table_info(users)")
     columns = [column[1] for column in cursor.fetchall()]
     
+    # Add api_key column if missing
     if 'api_key' not in columns:
         try:
             cursor.execute("ALTER TABLE users ADD COLUMN api_key TEXT")
-            conn.commit()
-            print("✅ Database migrated: Added api_key column")
-        except sqlite3.OperationalError as e:
-            print(f"Migration warning: {e}")
+            print("✅ Added api_key column")
+        except sqlite3.OperationalError:
+            pass
     
+    # Add email column if missing
+    if 'email' not in columns:
+        try:
+            cursor.execute("ALTER TABLE users ADD COLUMN email TEXT UNIQUE")
+            print("✅ Added email column")
+        except sqlite3.OperationalError:
+            pass
+    
+    # Add password_hash column if missing
+    if 'password_hash' not in columns:
+        try:
+            cursor.execute("ALTER TABLE users ADD COLUMN password_hash TEXT")
+            print("✅ Added password_hash column")
+        except sqlite3.OperationalError:
+            pass
+    
+    # Add is_active column if missing
+    if 'is_active' not in columns:
+        try:
+            cursor.execute("ALTER TABLE users ADD COLUMN is_active INTEGER DEFAULT 1")
+            print("✅ Added is_active column")
+        except sqlite3.OperationalError:
+            pass
+    
+    # Add last_login column if missing
+    if 'last_login' not in columns:
+        try:
+            cursor.execute("ALTER TABLE users ADD COLUMN last_login TIMESTAMP")
+            print("✅ Added last_login column")
+        except sqlite3.OperationalError:
+            pass
+    
+    conn.commit()
     conn.close()
 
 def init_database():
@@ -120,76 +154,39 @@ def init_database():
     conn.commit()
     conn.close()
     
-    # Run migration to add api_key column
+    # Run migration to add new columns
     migrate_database()
-    
-    # Create default user if none exists
-    conn = sqlite3.connect(str(DB_PATH))
-    cursor = conn.cursor()
-    cursor.execute("SELECT COUNT(*) FROM users")
-    if cursor.fetchone()[0] == 0:
-        cursor.execute("""
-            INSERT INTO users (username, display_name, avatar_url)
-            VALUES (?, ?, ?)
-        """, ("default_user", "Default User", "https://api.dicebear.com/7.x/avataaars/svg?seed=default"))
-        
-        user_id = cursor.lastrowid
-        cursor.execute("""
-            INSERT INTO settings (user_id, system_prompt)
-            VALUES (?, ?)
-        """, (user_id, "You are a helpful AI assistant."))
-    
-    conn.commit()
-    conn.close()
 
-def get_all_users() -> List[Dict]:
-    """Get all users from database"""
-    conn = sqlite3.connect(str(DB_PATH))
-    cursor = conn.cursor()
-    
-    # Check if api_key column exists
-    cursor.execute("PRAGMA table_info(users)")
-    columns = [column[1] for column in cursor.fetchall()]
-    has_api_key = 'api_key' in columns
-    
-    if has_api_key:
-        cursor.execute("SELECT user_id, username, display_name, avatar_url, api_key FROM users")
-        users = [
-            {"user_id": row[0], "username": row[1], "display_name": row[2], "avatar_url": row[3], "api_key": row[4]}
-            for row in cursor.fetchall()
-        ]
-    else:
-        cursor.execute("SELECT user_id, username, display_name, avatar_url FROM users")
-        users = [
-            {"user_id": row[0], "username": row[1], "display_name": row[2], "avatar_url": row[3], "api_key": None}
-            for row in cursor.fetchall()
-        ]
-    
-    conn.close()
-    return users
+# ========================================
+# AUTHENTICATION FUNCTIONS
+# ========================================
 
-def create_user(username: str, display_name: str, avatar_seed: str, api_key: str = None) -> int:
-    """Create a new user"""
+def hash_password(password: str) -> str:
+    """Hash a password using bcrypt"""
+    salt = bcrypt.gensalt()
+    hashed = bcrypt.hashpw(password.encode('utf-8'), salt)
+    return hashed.decode('utf-8')
+
+def verify_password(password: str, password_hash: str) -> bool:
+    """Verify a password against its hash"""
+    return bcrypt.checkpw(password.encode('utf-8'), password_hash.encode('utf-8'))
+
+def create_authenticated_user(username: str, email: str, display_name: str, password: str, avatar_seed: str = None) -> int:
+    """Create a new user with authentication"""
     conn = sqlite3.connect(str(DB_PATH))
     cursor = conn.cursor()
+    
+    if not avatar_seed:
+        avatar_seed = username
+    
     avatar_url = f"https://api.dicebear.com/7.x/avataaars/svg?seed={avatar_seed}"
-    
-    # Check if api_key column exists
-    cursor.execute("PRAGMA table_info(users)")
-    columns = [column[1] for column in cursor.fetchall()]
-    has_api_key = 'api_key' in columns
+    password_hash = hash_password(password)
     
     try:
-        if has_api_key:
-            cursor.execute("""
-                INSERT INTO users (username, display_name, avatar_url, api_key)
-                VALUES (?, ?, ?, ?)
-            """, (username, display_name, avatar_url, api_key))
-        else:
-            cursor.execute("""
-                INSERT INTO users (username, display_name, avatar_url)
-                VALUES (?, ?, ?)
-            """, (username, display_name, avatar_url))
+        cursor.execute("""
+            INSERT INTO users (username, email, display_name, avatar_url, password_hash, is_active)
+            VALUES (?, ?, ?, ?, ?, 1)
+        """, (username, email, display_name, avatar_url, password_hash))
         
         user_id = cursor.lastrowid
         
@@ -201,50 +198,100 @@ def create_user(username: str, display_name: str, avatar_seed: str, api_key: str
         
         conn.commit()
         return user_id
-    except sqlite3.IntegrityError:
+    except sqlite3.IntegrityError as e:
+        print(f"User creation error: {e}")
         return -1
     finally:
         conn.close()
+
+def authenticate_user(email: str, password: str) -> Optional[Dict]:
+    """Authenticate user with email and password"""
+    conn = sqlite3.connect(str(DB_PATH))
+    cursor = conn.cursor()
+    
+    cursor.execute("""
+        SELECT user_id, username, email, display_name, avatar_url, password_hash, api_key, is_active
+        FROM users
+        WHERE email = ? AND is_active = 1
+    """, (email,))
+    
+    row = cursor.fetchone()
+    
+    if row and row[5]:  # Check if user exists and has password_hash
+        if verify_password(password, row[5]):
+            # Update last login
+            cursor.execute("""
+                UPDATE users SET last_login = CURRENT_TIMESTAMP WHERE user_id = ?
+            """, (row[0],))
+            conn.commit()
+            
+            user = {
+                "user_id": row[0],
+                "username": row[1],
+                "email": row[2],
+                "display_name": row[3],
+                "avatar_url": row[4],
+                "api_key": row[6]
+            }
+            conn.close()
+            return user
+    
+    conn.close()
+    return None
+
+def get_user_by_id(user_id: int) -> Optional[Dict]:
+    """Get user by ID"""
+    conn = sqlite3.connect(str(DB_PATH))
+    cursor = conn.cursor()
+    
+    cursor.execute("""
+        SELECT user_id, username, email, display_name, avatar_url, api_key
+        FROM users
+        WHERE user_id = ? AND is_active = 1
+    """, (user_id,))
+    
+    row = cursor.fetchone()
+    conn.close()
+    
+    if row:
+        return {
+            "user_id": row[0],
+            "username": row[1],
+            "email": row[2],
+            "display_name": row[3],
+            "avatar_url": row[4],
+            "api_key": row[5]
+        }
+    return None
 
 def update_user_api_key(user_id: int, api_key: str):
     """Update user's API key"""
     conn = sqlite3.connect(str(DB_PATH))
     cursor = conn.cursor()
-    
-    # Check if api_key column exists
-    cursor.execute("PRAGMA table_info(users)")
-    columns = [column[1] for column in cursor.fetchall()]
-    
-    if 'api_key' in columns:
-        cursor.execute("UPDATE users SET api_key = ? WHERE user_id = ?", (api_key, user_id))
-        conn.commit()
-    else:
-        st.error("Database migration needed. Please refresh the page.")
-    
-    conn.close()
-
-def delete_user(user_id: int):
-    """Delete a user and all associated data"""
-    conn = sqlite3.connect(str(DB_PATH))
-    cursor = conn.cursor()
-    
-    # Delete messages
-    cursor.execute("""
-        DELETE FROM messages WHERE conversation_id IN 
-        (SELECT conversation_id FROM conversations WHERE user_id = ?)
-    """, (user_id,))
-    
-    # Delete conversations
-    cursor.execute("DELETE FROM conversations WHERE user_id = ?", (user_id,))
-    
-    # Delete settings
-    cursor.execute("DELETE FROM settings WHERE user_id = ?", (user_id,))
-    
-    # Delete user
-    cursor.execute("DELETE FROM users WHERE user_id = ?", (user_id,))
-    
+    cursor.execute("UPDATE users SET api_key = ? WHERE user_id = ?", (api_key, user_id))
     conn.commit()
     conn.close()
+
+def update_user_password(user_id: int, new_password: str):
+    """Update user's password"""
+    conn = sqlite3.connect(str(DB_PATH))
+    cursor = conn.cursor()
+    password_hash = hash_password(new_password)
+    cursor.execute("UPDATE users SET password_hash = ? WHERE user_id = ?", (password_hash, user_id))
+    conn.commit()
+    conn.close()
+
+def deactivate_user(user_id: int):
+    """Deactivate user account"""
+    conn = sqlite3.connect(str(DB_PATH))
+    cursor = conn.cursor()
+    cursor.execute("UPDATE users SET is_active = 0 WHERE user_id = ?", (user_id,))
+    conn.commit()
+    conn.close()
+
+# ========================================
+# CONVERSATION FUNCTIONS
+# ========================================
 
 def get_user_conversations(user_id: int) -> List[Dict]:
     """Get all conversations for a user"""
@@ -394,7 +441,7 @@ def call_ai_model(messages: List[Dict], model: str, settings: Dict, api_key: str
         "Authorization": f"Bearer {api_key}",
         "Content-Type": "application/json",
         "HTTP-Referer": "https://github.com/yourusername/ai-chatbot",
-        "X-Title": "Multi-Model AI Chatbot"
+        "X-Title": "Sagoma AI Chatbot"
     }
     
     payload = {
@@ -458,15 +505,143 @@ def stream_ai_response(messages: List[Dict], model: str, settings: Dict, api_key
     return full_response
 
 # ========================================
-# UI FUNCTIONS
+# UI FUNCTIONS - AUTHENTICATION
 # ========================================
+
+def render_login():
+    """Render login page"""
+    st.markdown("""
+        <style>
+        .auth-container {
+            max-width: 400px;
+            margin: 100px auto;
+            padding: 40px;
+            border-radius: 10px;
+            box-shadow: 0 4px 6px rgba(0, 0, 0, 0.1);
+        }
+        </style>
+    """, unsafe_allow_html=True)
+    
+    col1, col2, col3 = st.columns([1, 2, 1])
+    
+    with col2:
+        st.title("🤖 Sagoma AI")
+        st.subheader("Sign In")
+        
+        email = st.text_input("Email", placeholder="your@email.com", key="login_email")
+        password = st.text_input("Password", type="password", key="login_password")
+        
+        col_a, col_b = st.columns(2)
+        
+        with col_a:
+            if st.button("🔐 Sign In", type="primary", use_container_width=True):
+                if email and password:
+                    user = authenticate_user(email, password)
+                    if user:
+                        st.session_state.authenticated = True
+                        st.session_state.user_id = user["user_id"]
+                        st.session_state.active_user = user
+                        st.success("Login successful!")
+                        st.rerun()
+                    else:
+                        st.error("Invalid email or password")
+                else:
+                    st.error("Please enter both email and password")
+        
+        with col_b:
+            if st.button("📝 Sign Up", use_container_width=True):
+                st.session_state.show_signup = True
+                st.rerun()
+
+def render_signup():
+    """Render signup page"""
+    col1, col2, col3 = st.columns([1, 2, 1])
+    
+    with col2:
+        st.title("🤖 Sagoma AI")
+        st.subheader("Create Account")
+        
+        username = st.text_input("Username", placeholder="johndoe", key="signup_username")
+        email = st.text_input("Email", placeholder="your@email.com", key="signup_email")
+        display_name = st.text_input("Display Name", placeholder="John Doe", key="signup_display")
+        password = st.text_input("Password", type="password", key="signup_password")
+        password_confirm = st.text_input("Confirm Password", type="password", key="signup_confirm")
+        
+        col_a, col_b = st.columns(2)
+        
+        with col_a:
+            if st.button("✅ Create Account", type="primary", use_container_width=True):
+                if not all([username, email, display_name, password, password_confirm]):
+                    st.error("Please fill all fields")
+                elif password != password_confirm:
+                    st.error("Passwords do not match")
+                elif len(password) < 6:
+                    st.error("Password must be at least 6 characters")
+                else:
+                    user_id = create_authenticated_user(username, email, display_name, password)
+                    if user_id > 0:
+                        st.success("Account created! Please sign in.")
+                        st.session_state.show_signup = False
+                        st.rerun()
+                    else:
+                        st.error("Username or email already exists")
+        
+        with col_b:
+            if st.button("← Back to Login", use_container_width=True):
+                st.session_state.show_signup = False
+                st.rerun()
+
+# ========================================
+# UI FUNCTIONS - MAIN APP
+# ========================================
+
+def render_header():
+    """Render top header with user menu"""
+    col1, col2 = st.columns([4, 1])
+    
+    with col1:
+        st.title("🤖 Sagoma AI Chatbot")
+    
+    with col2:
+        if st.session_state.authenticated and st.session_state.active_user:
+            user = st.session_state.active_user
+            
+            # User menu
+            st.markdown(f"""
+                <div style="text-align: right; padding: 10px;">
+                    <img src="{user['avatar_url']}" width="40" style="border-radius: 50%; vertical-align: middle;">
+                    <span style="margin-left: 10px; font-weight: bold;">{user['display_name']}</span>
+                </div>
+            """, unsafe_allow_html=True)
+            
+            # Dropdown menu
+            menu_col1, menu_col2, menu_col3 = st.columns(3)
+            
+            with menu_col1:
+                if st.button("⚙️", key="settings_header", help="Settings"):
+                    st.session_state.show_settings = True
+                    st.rerun()
+            
+            with menu_col2:
+                if st.button("🔑", key="api_key_header", help="API Key"):
+                    st.session_state.show_api_key_modal = True
+                    st.rerun()
+            
+            with menu_col3:
+                if st.button("🚪", key="logout_header", help="Logout"):
+                    st.session_state.authenticated = False
+                    st.session_state.user_id = None
+                    st.session_state.active_user = None
+                    st.session_state.current_conversation = None
+                    st.session_state.messages = []
+                    st.rerun()
 
 def render_api_key_setup():
     """Render API key setup screen"""
     st.title("🔑 API Key Setup Required")
     
     st.markdown("""
-    ### Welcome to Multi-Model AI Chatbot!
+    ### Welcome to Sagoma AI Chatbot!
     
     To use this chatbot, you need an **OpenRouter API key** (it's free to get started).
     
@@ -500,10 +675,10 @@ def render_api_key_setup():
     with col1:
         if st.button("💾 Save Key", type="primary", use_container_width=True):
             if api_key and api_key.startswith("sk-or-"):
-                # Update current user's API key
                 update_user_api_key(st.session_state.active_user["user_id"], api_key)
                 st.session_state.active_user["api_key"] = api_key
-                st.success("API key saved! Redirecting...")
+                st.session_state.show_api_key_modal = False
+                st.success("API key saved!")
                 st.rerun()
             else:
                 st.error("Please enter a valid OpenRouter API key (starts with 'sk-or-')")
@@ -526,21 +701,6 @@ def render_sidebar():
     with st.sidebar:
         st.title("💬 Chat History")
         
-        # User profile section
-        if st.session_state.active_user:
-            user = st.session_state.active_user
-            
-            col1, col2 = st.columns([1, 3])
-            with col1:
-                st.image(user["avatar_url"], width=50)
-            with col2:
-                st.write(f"**{user['display_name']}**")
-                if st.button("⚙️ Settings", key="settings_btn", use_container_width=True):
-                    st.session_state.show_settings = True
-                    st.rerun()
-        
-        st.divider()
-        
         # New chat button
         if st.button("➕ New Chat", use_container_width=True, type="primary"):
             st.session_state.current_conversation = None
@@ -553,7 +713,7 @@ def render_sidebar():
         search_term = st.text_input("🔍 Search conversations", key="search_conv")
         
         # Display conversations
-        if st.session_state.active_user:
+        if st.session_state.authenticated and st.session_state.active_user:
             conversations = get_user_conversations(st.session_state.active_user["user_id"])
             
             if search_term:
@@ -594,50 +754,10 @@ def render_settings():
         
         st.title("⚙️ Settings")
         
-        tabs = st.tabs(["API Key", "Chat Behavior", "User Profile", "Account Management"])
-        
-        # API Key Tab
-        with tabs[0]:
-            st.subheader("🔑 OpenRouter API Key")
-            
-            current_key = st.session_state.active_user.get("api_key", "")
-            
-            if current_key:
-                st.success("✅ API key is configured")
-                masked_key = current_key[:10] + "..." + current_key[-4:] if len(current_key) > 14 else "***"
-                st.code(masked_key)
-            else:
-                st.warning("⚠️ No API key configured")
-            
-            st.divider()
-            
-            new_api_key = st.text_input(
-                "Update API Key:",
-                type="password",
-                placeholder="sk-or-v1-...",
-                help="Get your key from https://openrouter.ai/keys"
-            )
-            
-            if st.button("💾 Update API Key", type="primary"):
-                if new_api_key and new_api_key.startswith("sk-or-"):
-                    update_user_api_key(user_id, new_api_key)
-                    st.session_state.active_user["api_key"] = new_api_key
-                    st.success("API key updated!")
-                    st.rerun()
-                else:
-                    st.error("Please enter a valid OpenRouter API key")
-            
-            st.divider()
-            
-            st.markdown("""
-            **Get more credits:**
-            - Visit [OpenRouter](https://openrouter.ai/)
-            - Add payment method for pay-as-you-go
-            - Monitor usage in your dashboard
-            """)
+        tabs = st.tabs(["Chat Behavior", "Account Security"])
         
         # Chat Behavior Tab
-        with tabs[1]:
+        with tabs[0]:
             st.subheader("🤖 Chatbot Customization")
             
             new_system_prompt = st.text_area(
@@ -703,78 +823,37 @@ def render_settings():
                 st.success("Settings saved!")
                 st.rerun()
         
-        # User Profile Tab
-        with tabs[2]:
-            st.subheader("👤 Profile Information")
+        # Account Security Tab
+        with tabs[1]:
+            st.subheader("🔒 Account Security")
             
             user = st.session_state.active_user
             
-            col1, col2 = st.columns([1, 2])
-            with col1:
-                st.image(user["avatar_url"], width=100)
-            with col2:
-                st.write(f"**Username:** {user['username']}")
-                st.write(f"**Display Name:** {user['display_name']}")
-            
-            st.info("To change profile information, create a new account.")
-        
-        # Account Management Tab
-        with tabs[3]:
-            st.subheader("👥 Manage Accounts")
-            
-            # List all users
-            all_users = get_all_users()
-            
-            st.write("**Switch Account:**")
-            for user in all_users:
-                col1, col2, col3 = st.columns([1, 3, 1])
-                with col1:
-                    st.image(user["avatar_url"], width=40)
-                with col2:
-                    is_current = user["user_id"] == st.session_state.active_user["user_id"]
-                    button_label = f"✓ {user['display_name']}" if is_current else user['display_name']
-                    if st.button(
-                        button_label,
-                        key=f"switch_{user['user_id']}",
-                        disabled=is_current,
-                        use_container_width=True
-                    ):
-                        st.session_state.active_user = user
-                        st.session_state.current_conversation = None
-                        st.session_state.messages = []
-                        st.rerun()
-                with col3:
-                    if len(all_users) > 1:
-                        if st.button("🗑️", key=f"delete_user_{user['user_id']}"):
-                            if user["user_id"] != st.session_state.active_user["user_id"]:
-                                delete_user(user["user_id"])
-                                st.success(f"Deleted user: {user['display_name']}")
-                                st.rerun()
-                            else:
-                                st.error("Cannot delete active user. Switch accounts first.")
+            st.write(f"**Email:** {user.get('email', 'N/A')}")
+            st.write(f"**Username:** {user['username']}")
             
             st.divider()
             
-            # Create new account
-            with st.expander("➕ Create New Account"):
-                new_username = st.text_input("Username", key="new_username")
-                new_display_name = st.text_input("Display Name", key="new_display")
-                new_avatar_seed = st.text_input("Avatar Seed", value=new_username, key="new_avatar")
-                new_user_api_key = st.text_input("API Key (optional)", type="password", key="new_api_key")
-                
-                if st.button("Create Account", type="primary"):
-                    if new_username and new_display_name:
-                        user_id = create_user(new_username, new_display_name, new_avatar_seed, new_user_api_key or None)
-                        if user_id > 0:
-                            st.success(f"Created account: {new_display_name}")
-                            # Switch to new user
-                            new_user = next(u for u in get_all_users() if u["user_id"] == user_id)
-                            st.session_state.active_user = new_user
-                            st.rerun()
-                        else:
-                            st.error("Username already exists!")
+            st.subheader("Change Password")
+            
+            current_password = st.text_input("Current Password", type="password", key="current_pwd")
+            new_password = st.text_input("New Password", type="password", key="new_pwd")
+            confirm_password = st.text_input("Confirm New Password", type="password", key="confirm_pwd")
+            
+            if st.button("🔐 Update Password", type="primary"):
+                if not all([current_password, new_password, confirm_password]):
+                    st.error("Please fill all fields")
+                elif new_password != confirm_password:
+                    st.error("New passwords do not match")
+                elif len(new_password) < 6:
+                    st.error("Password must be at least 6 characters")
+                else:
+                    # Verify current password
+                    if authenticate_user(user['email'], current_password):
+                        update_user_password(user_id, new_password)
+                        st.success("Password updated successfully!")
                     else:
-                        st.error("Please fill username and display name")
+                        st.error("Current password is incorrect")
         
         st.divider()
         
@@ -786,20 +865,25 @@ def render_chat():
     """Render main chat interface"""
     # Check if API key is configured
     if not st.session_state.active_user.get("api_key"):
-        render_api_key_setup()
+        if st.session_state.show_api_key_modal:
+            render_api_key_setup()
+        else:
+            st.session_state.show_api_key_modal = True
+            st.rerun()
         return
     
     if st.session_state.show_settings:
         render_settings()
         return
     
-    # Header with model selector
-    col1, col2, col3 = st.columns([2, 2, 1])
+    if st.session_state.show_api_key_modal:
+        render_api_key_setup()
+        return
+    
+    # Model selector
+    col1, col2 = st.columns([3, 1])
     
     with col1:
-        st.title("🤖 AI Chatbot")
-    
-    with col2:
         model_display_names = list(AVAILABLE_MODELS.keys())
         model_values = list(AVAILABLE_MODELS.values())
         
@@ -813,9 +897,7 @@ def render_chat():
         )
         st.session_state.selected_model = AVAILABLE_MODELS[selected_display]
     
-    with col3:
-        st.write("")
-        st.write("")
+    with col2:
         st.info(f"**Active**")
     
     st.divider()
@@ -831,7 +913,7 @@ def render_chat():
         settings = get_user_settings(st.session_state.active_user["user_id"])
         api_key = st.session_state.active_user["api_key"]
         
-        # Create conversation if needed
+        # Create conversation immediately on first message
         if st.session_state.current_conversation is None:
             title = prompt[:50] if len(prompt) < 50 else prompt[:47] + "..."
             conv_id = create_conversation(
@@ -852,7 +934,7 @@ def render_chat():
         with st.chat_message("user"):
             st.write(prompt)
         
-        # Generate AI response
+        # Generate AI response with loading indicator
         with st.chat_message("assistant"):
             message_placeholder = st.empty()
             
@@ -863,33 +945,38 @@ def render_chat():
                 for m in st.session_state.messages
             ])
             
-            if settings.get("stream_response", True):
-                full_response = ""
-                for chunk in stream_ai_response(
-                    api_messages,
-                    st.session_state.selected_model,
-                    settings,
-                    api_key
-                ):
-                    full_response += chunk
-                    message_placeholder.markdown(full_response + "▌")
-                
-                message_placeholder.markdown(full_response)
-            else:
-                full_response = call_ai_model(
-                    api_messages,
-                    st.session_state.selected_model,
-                    settings,
-                    api_key,
-                    stream=False
-                )
-                if full_response:
+            # Show loading spinner
+            with st.spinner("Sagoma is processing request..."):
+                if settings.get("stream_response", True):
+                    full_response = ""
+                    for chunk in stream_ai_response(
+                        api_messages,
+                        st.session_state.selected_model,
+                        settings,
+                        api_key
+                    ):
+                        full_response += chunk
+                        message_placeholder.markdown(full_response + "▌")
+                    
                     message_placeholder.markdown(full_response)
+                else:
+                    full_response = call_ai_model(
+                        api_messages,
+                        st.session_state.selected_model,
+                        settings,
+                        api_key,
+                        stream=False
+                    )
+                    if full_response:
+                        message_placeholder.markdown(full_response)
             
             # Save assistant message
             if full_response:
                 st.session_state.messages.append({"role": "assistant", "content": full_response})
                 add_message(st.session_state.current_conversation["conversation_id"], "assistant", full_response)
+                
+                # Trigger sidebar refresh to show new conversation
+                st.rerun()
 
 # ========================================
 # MAIN APPLICATION
@@ -897,7 +984,7 @@ def render_chat():
 
 def main():
     st.set_page_config(
-        page_title="Multi-Model AI Chatbot",
+        page_title="Sagoma AI Chatbot",
         page_icon="🤖",
         layout="wide",
         initial_sidebar_state="expanded"
@@ -907,9 +994,17 @@ def main():
     init_database()
     
     # Initialize session state
+    if "authenticated" not in st.session_state:
+        st.session_state.authenticated = False
+    
+    if "user_id" not in st.session_state:
+        st.session_state.user_id = None
+    
     if "active_user" not in st.session_state:
-        users = get_all_users()
-        st.session_state.active_user = users[0] if users else None
+        st.session_state.active_user = None
+    
+    if "show_signup" not in st.session_state:
+        st.session_state.show_signup = False
     
     if "current_conversation" not in st.session_state:
         st.session_state.current_conversation = None
@@ -923,9 +1018,24 @@ def main():
     if "show_settings" not in st.session_state:
         st.session_state.show_settings = False
     
-    # Render UI
-    render_sidebar()
-    render_chat()
+    if "show_api_key_modal" not in st.session_state:
+        st.session_state.show_api_key_modal = False
+    
+    # Authentication flow
+    if not st.session_state.authenticated:
+        if st.session_state.show_signup:
+            render_signup()
+        else:
+            render_login()
+    else:
+        # Load user data if needed
+        if st.session_state.active_user is None and st.session_state.user_id:
+            st.session_state.active_user = get_user_by_id(st.session_state.user_id)
+        
+        # Render main app
+        render_header()
+        render_sidebar()
+        render_chat()
 
 if __name__ == "__main__":
     main()
