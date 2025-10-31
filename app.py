@@ -43,6 +43,25 @@ DB_PATH.parent.mkdir(exist_ok=True)
 # DATABASE FUNCTIONS
 # ========================================
 
+def migrate_database():
+    """Add api_key column to users table if it doesn't exist"""
+    conn = sqlite3.connect(str(DB_PATH))
+    cursor = conn.cursor()
+    
+    # Check if api_key column exists
+    cursor.execute("PRAGMA table_info(users)")
+    columns = [column[1] for column in cursor.fetchall()]
+    
+    if 'api_key' not in columns:
+        try:
+            cursor.execute("ALTER TABLE users ADD COLUMN api_key TEXT")
+            conn.commit()
+            print("✅ Database migrated: Added api_key column")
+        except sqlite3.OperationalError as e:
+            print(f"Migration warning: {e}")
+    
+    conn.close()
+
 def init_database():
     """Initialize SQLite database with required tables"""
     conn = sqlite3.connect(str(DB_PATH))
@@ -55,7 +74,6 @@ def init_database():
             username TEXT UNIQUE NOT NULL,
             display_name TEXT NOT NULL,
             avatar_url TEXT,
-            api_key TEXT,
             created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
         )
     """)
@@ -99,13 +117,21 @@ def init_database():
         )
     """)
     
+    conn.commit()
+    conn.close()
+    
+    # Run migration to add api_key column
+    migrate_database()
+    
     # Create default user if none exists
+    conn = sqlite3.connect(str(DB_PATH))
+    cursor = conn.cursor()
     cursor.execute("SELECT COUNT(*) FROM users")
     if cursor.fetchone()[0] == 0:
         cursor.execute("""
-            INSERT INTO users (username, display_name, avatar_url, api_key)
-            VALUES (?, ?, ?, ?)
-        """, ("default_user", "Default User", "https://api.dicebear.com/7.x/avataaars/svg?seed=default", None))
+            INSERT INTO users (username, display_name, avatar_url)
+            VALUES (?, ?, ?)
+        """, ("default_user", "Default User", "https://api.dicebear.com/7.x/avataaars/svg?seed=default"))
         
         user_id = cursor.lastrowid
         cursor.execute("""
@@ -120,11 +146,25 @@ def get_all_users() -> List[Dict]:
     """Get all users from database"""
     conn = sqlite3.connect(str(DB_PATH))
     cursor = conn.cursor()
-    cursor.execute("SELECT user_id, username, display_name, avatar_url, api_key FROM users")
-    users = [
-        {"user_id": row[0], "username": row[1], "display_name": row[2], "avatar_url": row[3], "api_key": row[4]}
-        for row in cursor.fetchall()
-    ]
+    
+    # Check if api_key column exists
+    cursor.execute("PRAGMA table_info(users)")
+    columns = [column[1] for column in cursor.fetchall()]
+    has_api_key = 'api_key' in columns
+    
+    if has_api_key:
+        cursor.execute("SELECT user_id, username, display_name, avatar_url, api_key FROM users")
+        users = [
+            {"user_id": row[0], "username": row[1], "display_name": row[2], "avatar_url": row[3], "api_key": row[4]}
+            for row in cursor.fetchall()
+        ]
+    else:
+        cursor.execute("SELECT user_id, username, display_name, avatar_url FROM users")
+        users = [
+            {"user_id": row[0], "username": row[1], "display_name": row[2], "avatar_url": row[3], "api_key": None}
+            for row in cursor.fetchall()
+        ]
+    
     conn.close()
     return users
 
@@ -134,11 +174,22 @@ def create_user(username: str, display_name: str, avatar_seed: str, api_key: str
     cursor = conn.cursor()
     avatar_url = f"https://api.dicebear.com/7.x/avataaars/svg?seed={avatar_seed}"
     
+    # Check if api_key column exists
+    cursor.execute("PRAGMA table_info(users)")
+    columns = [column[1] for column in cursor.fetchall()]
+    has_api_key = 'api_key' in columns
+    
     try:
-        cursor.execute("""
-            INSERT INTO users (username, display_name, avatar_url, api_key)
-            VALUES (?, ?, ?, ?)
-        """, (username, display_name, avatar_url, api_key))
+        if has_api_key:
+            cursor.execute("""
+                INSERT INTO users (username, display_name, avatar_url, api_key)
+                VALUES (?, ?, ?, ?)
+            """, (username, display_name, avatar_url, api_key))
+        else:
+            cursor.execute("""
+                INSERT INTO users (username, display_name, avatar_url)
+                VALUES (?, ?, ?)
+            """, (username, display_name, avatar_url))
         
         user_id = cursor.lastrowid
         
@@ -159,8 +210,17 @@ def update_user_api_key(user_id: int, api_key: str):
     """Update user's API key"""
     conn = sqlite3.connect(str(DB_PATH))
     cursor = conn.cursor()
-    cursor.execute("UPDATE users SET api_key = ? WHERE user_id = ?", (api_key, user_id))
-    conn.commit()
+    
+    # Check if api_key column exists
+    cursor.execute("PRAGMA table_info(users)")
+    columns = [column[1] for column in cursor.fetchall()]
+    
+    if 'api_key' in columns:
+        cursor.execute("UPDATE users SET api_key = ? WHERE user_id = ?", (api_key, user_id))
+        conn.commit()
+    else:
+        st.error("Database migration needed. Please refresh the page.")
+    
     conn.close()
 
 def delete_user(user_id: int):
