@@ -7,11 +7,19 @@ import streamlit as st
 import sqlite3
 import json
 import requests
-import bcrypt
 from datetime import datetime
 from typing import List, Dict, Optional
 import os
 from pathlib import Path
+
+# Try to import bcrypt, use hashlib as fallback
+try:
+    import bcrypt
+    BCRYPT_AVAILABLE = True
+except ImportError:
+    import hashlib
+    BCRYPT_AVAILABLE = False
+    st.warning("⚠️ bcrypt not available, using fallback password hashing (less secure)")
 
 # ========================================
 # CONFIGURATION
@@ -127,9 +135,8 @@ def init_database():
             try:
                 cursor.execute(sql)
                 conn.commit()
-                print(f"✅ Added {column_name} column to users table")
-            except sqlite3.OperationalError as e:
-                print(f"⚠️ Column {column_name} migration: {e}")
+            except sqlite3.OperationalError:
+                pass
     
     conn.close()
 
@@ -138,30 +145,41 @@ def init_database():
 # ========================================
 
 def hash_password(password: str) -> str:
-    """Hash a password using bcrypt"""
-    salt = bcrypt.gensalt()
-    hashed = bcrypt.hashpw(password.encode('utf-8'), salt)
-    return hashed.decode('utf-8')
+    """Hash a password using bcrypt or fallback to sha256"""
+    if BCRYPT_AVAILABLE:
+        salt = bcrypt.gensalt()
+        hashed = bcrypt.hashpw(password.encode('utf-8'), salt)
+        return hashed.decode('utf-8')
+    else:
+        # Fallback to sha256 (less secure but works without bcrypt)
+        import hashlib
+        return hashlib.sha256(password.encode('utf-8')).hexdigest()
 
 def verify_password(password: str, password_hash: str) -> bool:
     """Verify a password against its hash"""
     try:
-        return bcrypt.checkpw(password.encode('utf-8'), password_hash.encode('utf-8'))
-    except Exception:
+        if BCRYPT_AVAILABLE and password_hash.startswith('$2'):
+            return bcrypt.checkpw(password.encode('utf-8'), password_hash.encode('utf-8'))
+        else:
+            # Fallback verification
+            import hashlib
+            return hashlib.sha256(password.encode('utf-8')).hexdigest() == password_hash
+    except Exception as e:
+        st.error(f"Password verification error: {e}")
         return False
 
 def create_authenticated_user(username: str, email: str, display_name: str, password: str, avatar_seed: str = None) -> int:
     """Create a new user with authentication"""
-    conn = sqlite3.connect(str(DB_PATH))
-    cursor = conn.cursor()
-    
-    if not avatar_seed:
-        avatar_seed = username
-    
-    avatar_url = f"https://api.dicebear.com/7.x/avataaars/svg?seed={avatar_seed}"
-    password_hash = hash_password(password)
-    
     try:
+        conn = sqlite3.connect(str(DB_PATH))
+        cursor = conn.cursor()
+        
+        if not avatar_seed:
+            avatar_seed = username
+        
+        avatar_url = f"https://api.dicebear.com/7.x/avataaars/svg?seed={avatar_seed}"
+        password_hash = hash_password(password)
+        
         cursor.execute("""
             INSERT INTO users (username, email, display_name, avatar_url, password_hash, is_active)
             VALUES (?, ?, ?, ?, ?, 1)
@@ -176,24 +194,33 @@ def create_authenticated_user(username: str, email: str, display_name: str, pass
         """, (user_id, "You are a helpful AI assistant."))
         
         conn.commit()
-        return user_id
-    except sqlite3.IntegrityError as e:
-        print(f"User creation error: {e}")
-        conn.rollback()
-        return -1
-    except Exception as e:
-        print(f"Unexpected error: {e}")
-        conn.rollback()
-        return -2
-    finally:
         conn.close()
+        return user_id
+        
+    except sqlite3.IntegrityError as e:
+        if conn:
+            conn.close()
+        error_msg = str(e).lower()
+        if "username" in error_msg:
+            st.error("Username already exists")
+        elif "email" in error_msg:
+            st.error("Email already exists")
+        else:
+            st.error(f"Database constraint error: {e}")
+        return -1
+        
+    except Exception as e:
+        if conn:
+            conn.close()
+        st.error(f"Error creating user: {str(e)}")
+        return -2
 
 def authenticate_user(email: str, password: str) -> Optional[Dict]:
     """Authenticate user with email and password"""
-    conn = sqlite3.connect(str(DB_PATH))
-    cursor = conn.cursor()
-    
     try:
+        conn = sqlite3.connect(str(DB_PATH))
+        cursor = conn.cursor()
+        
         cursor.execute("""
             SELECT user_id, username, email, display_name, avatar_url, password_hash, api_key, is_active
             FROM users
@@ -202,7 +229,7 @@ def authenticate_user(email: str, password: str) -> Optional[Dict]:
         
         row = cursor.fetchone()
         
-        if row and row[5]:  # Check if user exists and has password_hash
+        if row and row[5]:
             if verify_password(password, row[5]):
                 # Update last login
                 cursor.execute("""
@@ -220,18 +247,22 @@ def authenticate_user(email: str, password: str) -> Optional[Dict]:
                 }
                 conn.close()
                 return user
+        
+        conn.close()
+        return None
+        
     except Exception as e:
-        print(f"Authentication error: {e}")
-    
-    conn.close()
-    return None
+        st.error(f"Authentication error: {e}")
+        if conn:
+            conn.close()
+        return None
 
 def get_user_by_id(user_id: int) -> Optional[Dict]:
     """Get user by ID"""
-    conn = sqlite3.connect(str(DB_PATH))
-    cursor = conn.cursor()
-    
     try:
+        conn = sqlite3.connect(str(DB_PATH))
+        cursor = conn.cursor()
+        
         cursor.execute("""
             SELECT user_id, username, email, display_name, avatar_url, api_key
             FROM users
@@ -239,6 +270,7 @@ def get_user_by_id(user_id: int) -> Optional[Dict]:
         """, (user_id,))
         
         row = cursor.fetchone()
+        conn.close()
         
         if row:
             return {
@@ -249,12 +281,11 @@ def get_user_by_id(user_id: int) -> Optional[Dict]:
                 "avatar_url": row[4],
                 "api_key": row[5]
             }
+        return None
+        
     except Exception as e:
-        print(f"Get user error: {e}")
-    finally:
-        conn.close()
-    
-    return None
+        st.error(f"Get user error: {e}")
+        return None
 
 def update_user_api_key(user_id: int, api_key: str):
     """Update user's API key"""
@@ -270,14 +301,6 @@ def update_user_password(user_id: int, new_password: str):
     cursor = conn.cursor()
     password_hash = hash_password(new_password)
     cursor.execute("UPDATE users SET password_hash = ? WHERE user_id = ?", (password_hash, user_id))
-    conn.commit()
-    conn.close()
-
-def deactivate_user(user_id: int):
-    """Deactivate user account"""
-    conn = sqlite3.connect(str(DB_PATH))
-    cursor = conn.cursor()
-    cursor.execute("UPDATE users SET is_active = 0 WHERE user_id = ?", (user_id,))
     conn.commit()
     conn.close()
 
@@ -597,15 +620,18 @@ def render_signup():
                 elif "@" not in email or "." not in email:
                     st.error("Please enter a valid email address")
                 else:
-                    user_id = create_authenticated_user(username, email, display_name, password)
-                    if user_id > 0:
-                        st.success("Account created! Please sign in.")
-                        st.session_state.show_signup = False
-                        st.rerun()
-                    elif user_id == -1:
-                        st.error("Username or email already exists")
-                    else:
-                        st.error("An error occurred. Please try again.")
+                    with st.spinner("Creating account..."):
+                        user_id = create_authenticated_user(username, email, display_name, password)
+                        if user_id > 0:
+                            st.success("✅ Account created! Please sign in.")
+                            st.balloons()
+                            st.session_state.show_signup = False
+                            st.rerun()
+                        elif user_id == -1:
+                            # Error already displayed by create_authenticated_user
+                            pass
+                        else:
+                            st.error("An unexpected error occurred. Please try again.")
         
         with col_b:
             if st.button("← Back to Login", use_container_width=True):
