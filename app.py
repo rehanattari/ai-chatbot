@@ -16,26 +16,24 @@ from pathlib import Path
 # CONFIGURATION
 # ========================================
 
-# OpenRouter Custom Endpoint (No API Keys Required)
-OPENROUTER_ENDPOINT = "https://llm.blackbox.ai/chat/completions"
-OPENROUTER_HEADERS = {
-    "customerId": "cus_THK5Sv5YGMPz67",
-    "Content-Type": "application/json",
-    "Authorization": "Bearer xxx"
-}
+# OpenRouter Public Endpoint
+OPENROUTER_ENDPOINT = "https://openrouter.ai/api/v1/chat/completions"
 
 # Available AI Models
 AVAILABLE_MODELS = {
-    "Claude Sonnet 4": "openrouter/claude-sonnet-4",
-    "GPT-4o Mini": "gpt-4o-mini",
-    "Gemini 2.0 Flash": "google/gemini-2.0-flash-001",
-    "Grok-3 Beta": "grok-3-beta",
-    "DeepSeek V3": "deepseek-v3",
-    "Claude Opus 4": "custom/claude-opus-4",
-    "Grok-4": "grok-4",
+    "Claude Sonnet 3.5": "anthropic/claude-3.5-sonnet",
+    "GPT-4o": "openai/gpt-4o",
+    "GPT-4o Mini": "openai/gpt-4o-mini",
+    "Gemini Pro 1.5": "google/gemini-pro-1.5",
+    "Gemini Flash 1.5": "google/gemini-flash-1.5",
+    "Llama 3.1 70B": "meta-llama/llama-3.1-70b-instruct",
+    "Llama 3.1 405B": "meta-llama/llama-3.1-405b-instruct",
+    "DeepSeek V3": "deepseek/deepseek-chat",
+    "Mixtral 8x7B": "mistralai/mixtral-8x7b-instruct",
+    "Command R+": "cohere/command-r-plus",
 }
 
-DEFAULT_MODEL = "openrouter/claude-sonnet-4"
+DEFAULT_MODEL = "anthropic/claude-3.5-sonnet"
 
 # Database path
 DB_PATH = Path(__file__).parent / "database" / "conversations.db"
@@ -57,6 +55,7 @@ def init_database():
             username TEXT UNIQUE NOT NULL,
             display_name TEXT NOT NULL,
             avatar_url TEXT,
+            api_key TEXT,
             created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
         )
     """)
@@ -104,9 +103,9 @@ def init_database():
     cursor.execute("SELECT COUNT(*) FROM users")
     if cursor.fetchone()[0] == 0:
         cursor.execute("""
-            INSERT INTO users (username, display_name, avatar_url)
-            VALUES (?, ?, ?)
-        """, ("default_user", "Default User", "https://api.dicebear.com/7.x/avataaars/svg?seed=default"))
+            INSERT INTO users (username, display_name, avatar_url, api_key)
+            VALUES (?, ?, ?, ?)
+        """, ("default_user", "Default User", "https://api.dicebear.com/7.x/avataaars/svg?seed=default", None))
         
         user_id = cursor.lastrowid
         cursor.execute("""
@@ -121,15 +120,15 @@ def get_all_users() -> List[Dict]:
     """Get all users from database"""
     conn = sqlite3.connect(str(DB_PATH))
     cursor = conn.cursor()
-    cursor.execute("SELECT user_id, username, display_name, avatar_url FROM users")
+    cursor.execute("SELECT user_id, username, display_name, avatar_url, api_key FROM users")
     users = [
-        {"user_id": row[0], "username": row[1], "display_name": row[2], "avatar_url": row[3]}
+        {"user_id": row[0], "username": row[1], "display_name": row[2], "avatar_url": row[3], "api_key": row[4]}
         for row in cursor.fetchall()
     ]
     conn.close()
     return users
 
-def create_user(username: str, display_name: str, avatar_seed: str) -> int:
+def create_user(username: str, display_name: str, avatar_seed: str, api_key: str = None) -> int:
     """Create a new user"""
     conn = sqlite3.connect(str(DB_PATH))
     cursor = conn.cursor()
@@ -137,9 +136,9 @@ def create_user(username: str, display_name: str, avatar_seed: str) -> int:
     
     try:
         cursor.execute("""
-            INSERT INTO users (username, display_name, avatar_url)
-            VALUES (?, ?, ?)
-        """, (username, display_name, avatar_url))
+            INSERT INTO users (username, display_name, avatar_url, api_key)
+            VALUES (?, ?, ?, ?)
+        """, (username, display_name, avatar_url, api_key))
         
         user_id = cursor.lastrowid
         
@@ -155,6 +154,14 @@ def create_user(username: str, display_name: str, avatar_seed: str) -> int:
         return -1
     finally:
         conn.close()
+
+def update_user_api_key(user_id: int, api_key: str):
+    """Update user's API key"""
+    conn = sqlite3.connect(str(DB_PATH))
+    cursor = conn.cursor()
+    cursor.execute("UPDATE users SET api_key = ? WHERE user_id = ?", (api_key, user_id))
+    conn.commit()
+    conn.close()
 
 def delete_user(user_id: int):
     """Delete a user and all associated data"""
@@ -321,8 +328,15 @@ def update_user_settings(user_id: int, settings: Dict):
 # AI API FUNCTIONS
 # ========================================
 
-def call_ai_model(messages: List[Dict], model: str, settings: Dict, stream: bool = True):
+def call_ai_model(messages: List[Dict], model: str, settings: Dict, api_key: str, stream: bool = True):
     """Call AI model via OpenRouter"""
+    headers = {
+        "Authorization": f"Bearer {api_key}",
+        "Content-Type": "application/json",
+        "HTTP-Referer": "https://github.com/yourusername/ai-chatbot",
+        "X-Title": "Multi-Model AI Chatbot"
+    }
+    
     payload = {
         "model": model,
         "messages": messages,
@@ -334,7 +348,7 @@ def call_ai_model(messages: List[Dict], model: str, settings: Dict, stream: bool
     try:
         response = requests.post(
             OPENROUTER_ENDPOINT,
-            headers=OPENROUTER_HEADERS,
+            headers=headers,
             json=payload,
             stream=stream,
             timeout=300
@@ -352,9 +366,9 @@ def call_ai_model(messages: List[Dict], model: str, settings: Dict, stream: bool
         st.error(f"API Error: {str(e)}")
         return None
 
-def stream_ai_response(messages: List[Dict], model: str, settings: Dict):
+def stream_ai_response(messages: List[Dict], model: str, settings: Dict, api_key: str):
     """Stream AI response token by token"""
-    response = call_ai_model(messages, model, settings, stream=True)
+    response = call_ai_model(messages, model, settings, api_key, stream=True)
     
     if response is None:
         return
@@ -387,10 +401,70 @@ def stream_ai_response(messages: List[Dict], model: str, settings: Dict):
 # UI FUNCTIONS
 # ========================================
 
+def render_api_key_setup():
+    """Render API key setup screen"""
+    st.title("🔑 API Key Setup Required")
+    
+    st.markdown("""
+    ### Welcome to Multi-Model AI Chatbot!
+    
+    To use this chatbot, you need an **OpenRouter API key** (it's free to get started).
+    
+    #### How to get your API key:
+    
+    1. Go to [OpenRouter.ai](https://openrouter.ai/)
+    2. Click **"Sign In"** (use Google, GitHub, or email)
+    3. Click on your profile → **"Keys"**
+    4. Click **"Create Key"**
+    5. Copy your API key
+    6. Paste it below
+    
+    #### Why OpenRouter?
+    - ✅ Access to 100+ AI models (GPT-4, Claude, Gemini, etc.)
+    - ✅ Pay-as-you-go pricing (no subscription)
+    - ✅ Free credits to start ($1-5 depending on promotions)
+    - ✅ Simple, unified API
+    
+    """)
+    
+    st.divider()
+    
+    api_key = st.text_input(
+        "Enter your OpenRouter API Key:",
+        type="password",
+        placeholder="sk-or-v1-..."
+    )
+    
+    col1, col2 = st.columns([1, 3])
+    
+    with col1:
+        if st.button("💾 Save Key", type="primary", use_container_width=True):
+            if api_key and api_key.startswith("sk-or-"):
+                # Update current user's API key
+                update_user_api_key(st.session_state.active_user["user_id"], api_key)
+                st.session_state.active_user["api_key"] = api_key
+                st.success("API key saved! Redirecting...")
+                st.rerun()
+            else:
+                st.error("Please enter a valid OpenRouter API key (starts with 'sk-or-')")
+    
+    with col2:
+        if st.button("ℹ️ More Info", use_container_width=True):
+            st.info("""
+            **OpenRouter Pricing:**
+            - GPT-4o Mini: ~$0.15 per 1M tokens
+            - Claude 3.5 Sonnet: ~$3 per 1M tokens
+            - Gemini Flash: ~$0.075 per 1M tokens
+            
+            **Example costs:**
+            - 100 conversations ≈ $0.50 - $2.00
+            - Most users spend <$5/month
+            """)
+
 def render_sidebar():
     """Render the sidebar with conversation history"""
     with st.sidebar:
-        st.title("Chat History")
+        st.title("💬 Chat History")
         
         # User profile section
         if st.session_state.active_user:
@@ -430,8 +504,9 @@ def render_sidebar():
                     col1, col2 = st.columns([5, 1])
                     
                     with col1:
+                        title_display = conv['title'][:30] + "..." if len(conv['title']) > 30 else conv['title']
                         if st.button(
-                            f"💬 {conv['title'][:30]}...",
+                            f"💬 {title_display}",
                             key=f"conv_{conv['conversation_id']}",
                             use_container_width=True
                         ):
@@ -459,11 +534,51 @@ def render_settings():
         
         st.title("⚙️ Settings")
         
-        tabs = st.tabs(["Chat Behavior", "User Profile", "Account Management"])
+        tabs = st.tabs(["API Key", "Chat Behavior", "User Profile", "Account Management"])
+        
+        # API Key Tab
+        with tabs[0]:
+            st.subheader("🔑 OpenRouter API Key")
+            
+            current_key = st.session_state.active_user.get("api_key", "")
+            
+            if current_key:
+                st.success("✅ API key is configured")
+                masked_key = current_key[:10] + "..." + current_key[-4:] if len(current_key) > 14 else "***"
+                st.code(masked_key)
+            else:
+                st.warning("⚠️ No API key configured")
+            
+            st.divider()
+            
+            new_api_key = st.text_input(
+                "Update API Key:",
+                type="password",
+                placeholder="sk-or-v1-...",
+                help="Get your key from https://openrouter.ai/keys"
+            )
+            
+            if st.button("💾 Update API Key", type="primary"):
+                if new_api_key and new_api_key.startswith("sk-or-"):
+                    update_user_api_key(user_id, new_api_key)
+                    st.session_state.active_user["api_key"] = new_api_key
+                    st.success("API key updated!")
+                    st.rerun()
+                else:
+                    st.error("Please enter a valid OpenRouter API key")
+            
+            st.divider()
+            
+            st.markdown("""
+            **Get more credits:**
+            - Visit [OpenRouter](https://openrouter.ai/)
+            - Add payment method for pay-as-you-go
+            - Monitor usage in your dashboard
+            """)
         
         # Chat Behavior Tab
-        with tabs[0]:
-            st.subheader("Chatbot Customization")
+        with tabs[1]:
+            st.subheader("🤖 Chatbot Customization")
             
             new_system_prompt = st.text_area(
                 "System Prompt",
@@ -529,8 +644,8 @@ def render_settings():
                 st.rerun()
         
         # User Profile Tab
-        with tabs[1]:
-            st.subheader("Profile Information")
+        with tabs[2]:
+            st.subheader("👤 Profile Information")
             
             user = st.session_state.active_user
             
@@ -544,8 +659,8 @@ def render_settings():
             st.info("To change profile information, create a new account.")
         
         # Account Management Tab
-        with tabs[2]:
-            st.subheader("Manage Accounts")
+        with tabs[3]:
+            st.subheader("👥 Manage Accounts")
             
             # List all users
             all_users = get_all_users()
@@ -556,10 +671,13 @@ def render_settings():
                 with col1:
                     st.image(user["avatar_url"], width=40)
                 with col2:
+                    is_current = user["user_id"] == st.session_state.active_user["user_id"]
+                    button_label = f"✓ {user['display_name']}" if is_current else user['display_name']
                     if st.button(
-                        user["display_name"],
+                        button_label,
                         key=f"switch_{user['user_id']}",
-                        disabled=(user["user_id"] == st.session_state.active_user["user_id"])
+                        disabled=is_current,
+                        use_container_width=True
                     ):
                         st.session_state.active_user = user
                         st.session_state.current_conversation = None
@@ -582,10 +700,11 @@ def render_settings():
                 new_username = st.text_input("Username", key="new_username")
                 new_display_name = st.text_input("Display Name", key="new_display")
                 new_avatar_seed = st.text_input("Avatar Seed", value=new_username, key="new_avatar")
+                new_user_api_key = st.text_input("API Key (optional)", type="password", key="new_api_key")
                 
                 if st.button("Create Account", type="primary"):
                     if new_username and new_display_name:
-                        user_id = create_user(new_username, new_display_name, new_avatar_seed)
+                        user_id = create_user(new_username, new_display_name, new_avatar_seed, new_user_api_key or None)
                         if user_id > 0:
                             st.success(f"Created account: {new_display_name}")
                             # Switch to new user
@@ -595,7 +714,7 @@ def render_settings():
                         else:
                             st.error("Username already exists!")
                     else:
-                        st.error("Please fill all fields")
+                        st.error("Please fill username and display name")
         
         st.divider()
         
@@ -605,6 +724,11 @@ def render_settings():
 
 def render_chat():
     """Render main chat interface"""
+    # Check if API key is configured
+    if not st.session_state.active_user.get("api_key"):
+        render_api_key_setup()
+        return
+    
     if st.session_state.show_settings:
         render_settings()
         return
@@ -616,18 +740,23 @@ def render_chat():
         st.title("🤖 AI Chatbot")
     
     with col2:
-        model_key = st.selectbox(
+        model_display_names = list(AVAILABLE_MODELS.keys())
+        model_values = list(AVAILABLE_MODELS.values())
+        
+        current_index = model_values.index(st.session_state.selected_model) if st.session_state.selected_model in model_values else 0
+        
+        selected_display = st.selectbox(
             "Select AI Model",
-            options=list(AVAILABLE_MODELS.keys()),
-            index=list(AVAILABLE_MODELS.values()).index(st.session_state.selected_model),
+            options=model_display_names,
+            index=current_index,
             key="model_selector"
         )
-        st.session_state.selected_model = AVAILABLE_MODELS[model_key]
+        st.session_state.selected_model = AVAILABLE_MODELS[selected_display]
     
     with col3:
         st.write("")
         st.write("")
-        st.info(f"**Active Model**")
+        st.info(f"**Active**")
     
     st.divider()
     
@@ -640,6 +769,7 @@ def render_chat():
     if prompt := st.chat_input("Type your message here..."):
         # Get settings
         settings = get_user_settings(st.session_state.active_user["user_id"])
+        api_key = st.session_state.active_user["api_key"]
         
         # Create conversation if needed
         if st.session_state.current_conversation is None:
@@ -678,7 +808,8 @@ def render_chat():
                 for chunk in stream_ai_response(
                     api_messages,
                     st.session_state.selected_model,
-                    settings
+                    settings,
+                    api_key
                 ):
                     full_response += chunk
                     message_placeholder.markdown(full_response + "▌")
@@ -689,9 +820,11 @@ def render_chat():
                     api_messages,
                     st.session_state.selected_model,
                     settings,
+                    api_key,
                     stream=False
                 )
-                message_placeholder.markdown(full_response)
+                if full_response:
+                    message_placeholder.markdown(full_response)
             
             # Save assistant message
             if full_response:
