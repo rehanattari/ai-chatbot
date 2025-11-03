@@ -1,5 +1,5 @@
 """
-Multi-Model AI Chatbot with Complete Authentication
+Multi-Model AI Chatbot with Complete Authentication and Password Recovery
 Supports OpenAI, Claude, Gemini, Grok, and more via OpenRouter
 """
 
@@ -11,6 +11,8 @@ from datetime import datetime, timedelta
 from typing import List, Dict, Optional
 import os
 from pathlib import Path
+import secrets
+import string
 
 # Try to import bcrypt, use hashlib as fallback
 try:
@@ -43,9 +45,49 @@ AVAILABLE_MODELS = {
 
 DEFAULT_MODEL = "anthropic/claude-3.5-sonnet"
 
+# Security Questions
+SECURITY_QUESTIONS = [
+    "What is your mother's maiden name?",
+    "What was the name of your first pet?",
+    "What city were you born in?",
+    "What is your favorite book?",
+    "What was your childhood nickname?",
+    "What is the name of your elementary school?",
+]
+
 # Database path
 DB_PATH = Path(__file__).parent / "database" / "conversations.db"
 DB_PATH.parent.mkdir(exist_ok=True)
+
+# ========================================
+# SECURITY FUNCTIONS
+# ========================================
+
+def generate_recovery_code() -> str:
+    """Generate a random recovery code"""
+    characters = string.ascii_uppercase + string.digits
+    return ''.join(secrets.choice(characters) for _ in range(16))
+
+def hash_data(data: str) -> str:
+    """Hash any data using bcrypt or sha256"""
+    if BCRYPT_AVAILABLE:
+        salt = bcrypt.gensalt()
+        hashed = bcrypt.hashpw(data.encode('utf-8'), salt)
+        return hashed.decode('utf-8')
+    else:
+        import hashlib
+        return hashlib.sha256(data.encode('utf-8')).hexdigest()
+
+def verify_hashed_data(data: str, hashed: str) -> bool:
+    """Verify data against its hash"""
+    try:
+        if BCRYPT_AVAILABLE and hashed.startswith('$2'):
+            return bcrypt.checkpw(data.encode('utf-8'), hashed.encode('utf-8'))
+        else:
+            import hashlib
+            return hashlib.sha256(data.encode('utf-8')).hexdigest() == hashed
+    except Exception:
+        return False
 
 # ========================================
 # THEME MANAGEMENT
@@ -53,13 +95,11 @@ DB_PATH.parent.mkdir(exist_ok=True)
 
 def apply_theme():
     """Apply custom CSS based on theme"""
-    # Get current theme
     theme = st.session_state.get('theme', 'light')
     
     if theme == 'dark':
         st.markdown("""
             <style>
-            /* Dark mode styles */
             .stApp {
                 background-color: #0e1117;
                 color: #fafafa;
@@ -71,20 +111,19 @@ def apply_theme():
                 background-color: #262730;
                 color: #fafafa;
             }
-            .user-avatar-dropdown {
-                background-color: #262730;
-                color: #fafafa;
-                border: 1px solid #464646;
-            }
             .conversation-group-header {
                 color: #a0a0a0;
+            }
+            .recovery-code-box {
+                background-color: #262730;
+                border: 2px solid #464646;
+                color: #fafafa;
             }
             </style>
         """, unsafe_allow_html=True)
     else:
         st.markdown("""
             <style>
-            /* Light mode styles */
             .stApp {
                 background-color: #ffffff;
                 color: #31333F;
@@ -92,54 +131,19 @@ def apply_theme():
             [data-testid="stSidebar"] {
                 background-color: #f0f2f6;
             }
-            .user-avatar-dropdown {
-                background-color: #ffffff;
-                color: #31333F;
-                border: 1px solid #e0e0e0;
-            }
             .conversation-group-header {
                 color: #6e6e6e;
+            }
+            .recovery-code-box {
+                background-color: #f0f2f6;
+                border: 2px solid #e0e0e0;
+                color: #31333F;
             }
             </style>
         """, unsafe_allow_html=True)
     
-    # Common styles
     st.markdown("""
         <style>
-        /* User avatar styling */
-        .user-avatar-container {
-            position: relative;
-            display: inline-block;
-        }
-        .user-avatar {
-            width: 40px;
-            height: 40px;
-            border-radius: 50%;
-            cursor: pointer;
-            object-fit: cover;
-        }
-        .user-avatar-dropdown {
-            position: absolute;
-            top: 50px;
-            right: 0;
-            min-width: 200px;
-            border-radius: 8px;
-            box-shadow: 0 4px 6px rgba(0,0,0,0.1);
-            padding: 0.5rem;
-            z-index: 1000;
-        }
-        .dropdown-item {
-            padding: 0.75rem 1rem;
-            cursor: pointer;
-            border-radius: 4px;
-            display: flex;
-            align-items: center;
-            gap: 0.5rem;
-            transition: background-color 0.2s;
-        }
-        .dropdown-item:hover {
-            background-color: rgba(0,0,0,0.05);
-        }
         .conversation-group-header {
             font-size: 0.75rem;
             font-weight: 600;
@@ -148,25 +152,30 @@ def apply_theme():
             padding: 0.5rem 0;
             margin-top: 1rem;
         }
-        .theme-toggle {
-            padding: 0.5rem;
-            border-radius: 4px;
-            cursor: pointer;
+        .recovery-code-box {
+            padding: 1rem;
+            border-radius: 8px;
+            text-align: center;
+            font-family: monospace;
+            font-size: 1.5rem;
+            font-weight: 700;
+            letter-spacing: 0.1em;
+            margin: 1rem 0;
         }
+        #MainMenu {visibility: hidden;}
+        footer {visibility: hidden;}
         </style>
     """, unsafe_allow_html=True)
 
 # ========================================
-# DATABASE FUNCTIONS (Keep existing)
+# DATABASE FUNCTIONS
 # ========================================
 
 def get_table_columns(cursor, table_name: str) -> list:
-    """Get list of columns for a table"""
     cursor.execute(f"PRAGMA table_info({table_name})")
     return [column[1] for column in cursor.fetchall()]
 
 def init_database():
-    """Initialize SQLite database with required tables"""
     conn = sqlite3.connect(str(DB_PATH))
     cursor = conn.cursor()
     
@@ -181,6 +190,9 @@ def init_database():
             ("api_key", "ALTER TABLE users ADD COLUMN api_key TEXT"),
             ("is_active", "ALTER TABLE users ADD COLUMN is_active INTEGER DEFAULT 1"),
             ("last_login", "ALTER TABLE users ADD COLUMN last_login TIMESTAMP"),
+            ("security_question", "ALTER TABLE users ADD COLUMN security_question TEXT"),
+            ("security_answer_hash", "ALTER TABLE users ADD COLUMN security_answer_hash TEXT"),
+            ("recovery_code_hash", "ALTER TABLE users ADD COLUMN recovery_code_hash TEXT"),
         ]
         
         for column_name, sql in migrations:
@@ -202,6 +214,9 @@ def init_database():
                 api_key TEXT,
                 is_active INTEGER DEFAULT 1,
                 last_login TIMESTAMP,
+                security_question TEXT,
+                security_answer_hash TEXT,
+                recovery_code_hash TEXT,
                 created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
             )
         """)
@@ -247,7 +262,7 @@ def init_database():
     conn.close()
 
 # ========================================
-# AUTHENTICATION FUNCTIONS (Keep existing)
+# AUTHENTICATION FUNCTIONS
 # ========================================
 
 def hash_password(password: str) -> str:
@@ -269,7 +284,9 @@ def verify_password(password: str, password_hash: str) -> bool:
     except Exception:
         return False
 
-def create_authenticated_user(username: str, email: str, display_name: str, password: str, avatar_seed: str = None) -> int:
+def create_authenticated_user(username: str, email: str, display_name: str, password: str, 
+                              security_question: str, security_answer: str, avatar_seed: str = None) -> tuple:
+    """Create a new user with authentication and recovery options"""
     try:
         conn = sqlite3.connect(str(DB_PATH))
         cursor = conn.cursor()
@@ -279,19 +296,27 @@ def create_authenticated_user(username: str, email: str, display_name: str, pass
         
         avatar_url = f"https://api.dicebear.com/7.x/avataaars/svg?seed={avatar_seed}"
         password_hash = hash_password(password)
+        security_answer_hash = hash_data(security_answer.lower().strip())
+        
+        # Generate recovery code
+        recovery_code = generate_recovery_code()
+        recovery_code_hash = hash_data(recovery_code)
         
         columns = get_table_columns(cursor, "users")
         
-        if "email" in columns and "password_hash" in columns and "is_active" in columns:
+        if all(col in columns for col in ["email", "password_hash", "security_question", "security_answer_hash", "recovery_code_hash"]):
             cursor.execute("""
-                INSERT INTO users (username, email, display_name, avatar_url, password_hash, is_active)
-                VALUES (?, ?, ?, ?, ?, 1)
-            """, (username, email, display_name, avatar_url, password_hash))
+                INSERT INTO users (username, email, display_name, avatar_url, password_hash, 
+                                  security_question, security_answer_hash, recovery_code_hash, is_active)
+                VALUES (?, ?, ?, ?, ?, ?, ?, ?, 1)
+            """, (username, email, display_name, avatar_url, password_hash, 
+                  security_question, security_answer_hash, recovery_code_hash))
         else:
             cursor.execute("""
                 INSERT INTO users (username, display_name, avatar_url)
                 VALUES (?, ?, ?)
             """, (username, display_name, avatar_url))
+            recovery_code = None
         
         user_id = cursor.lastrowid
         
@@ -302,7 +327,7 @@ def create_authenticated_user(username: str, email: str, display_name: str, pass
         
         conn.commit()
         conn.close()
-        return user_id
+        return user_id, recovery_code
         
     except sqlite3.IntegrityError as e:
         if conn:
@@ -312,13 +337,13 @@ def create_authenticated_user(username: str, email: str, display_name: str, pass
             st.error("Username already exists")
         elif "email" in error_msg:
             st.error("Email already exists")
-        return -1
+        return -1, None
         
     except Exception as e:
         if conn:
             conn.close()
         st.error(f"Error creating user: {str(e)}")
-        return -2
+        return -2, None
 
 def authenticate_user(email: str, password: str) -> Optional[Dict]:
     try:
@@ -358,6 +383,86 @@ def authenticate_user(email: str, password: str) -> Optional[Dict]:
         if conn:
             conn.close()
         return None
+
+def get_user_security_info(email: str) -> Optional[Dict]:
+    """Get user's security question for password recovery"""
+    try:
+        conn = sqlite3.connect(str(DB_PATH))
+        cursor = conn.cursor()
+        
+        cursor.execute("""
+            SELECT user_id, username, email, security_question, security_answer_hash, recovery_code_hash
+            FROM users
+            WHERE email = ? AND is_active = 1
+        """, (email,))
+        
+        row = cursor.fetchone()
+        conn.close()
+        
+        if row:
+            return {
+                "user_id": row[0],
+                "username": row[1],
+                "email": row[2],
+                "security_question": row[3],
+                "security_answer_hash": row[4],
+                "recovery_code_hash": row[5]
+            }
+        return None
+    except Exception:
+        return None
+
+def reset_password_with_security(email: str, security_answer: str, new_password: str) -> bool:
+    """Reset password using security question"""
+    try:
+        user_info = get_user_security_info(email)
+        
+        if not user_info or not user_info.get("security_answer_hash"):
+            return False
+        
+        # Verify security answer
+        if verify_hashed_data(security_answer.lower().strip(), user_info["security_answer_hash"]):
+            conn = sqlite3.connect(str(DB_PATH))
+            cursor = conn.cursor()
+            
+            new_password_hash = hash_password(new_password)
+            cursor.execute("""
+                UPDATE users SET password_hash = ? WHERE user_id = ?
+            """, (new_password_hash, user_info["user_id"]))
+            
+            conn.commit()
+            conn.close()
+            return True
+        
+        return False
+    except Exception:
+        return False
+
+def reset_password_with_recovery_code(email: str, recovery_code: str, new_password: str) -> bool:
+    """Reset password using recovery code"""
+    try:
+        user_info = get_user_security_info(email)
+        
+        if not user_info or not user_info.get("recovery_code_hash"):
+            return False
+        
+        # Verify recovery code
+        if verify_hashed_data(recovery_code.strip(), user_info["recovery_code_hash"]):
+            conn = sqlite3.connect(str(DB_PATH))
+            cursor = conn.cursor()
+            
+            new_password_hash = hash_password(new_password)
+            cursor.execute("""
+                UPDATE users SET password_hash = ? WHERE user_id = ?
+            """, (new_password_hash, user_info["user_id"]))
+            
+            conn.commit()
+            conn.close()
+            return True
+        
+        return False
+    except Exception:
+        return False
 
 def get_user_by_id(user_id: int) -> Optional[Dict]:
     try:
@@ -403,7 +508,7 @@ def update_user_password(user_id: int, new_password: str):
     conn.close()
 
 # ========================================
-# CONVERSATION FUNCTIONS
+# CONVERSATION FUNCTIONS (Keep existing)
 # ========================================
 
 def get_user_conversations(user_id: int) -> List[Dict]:
@@ -430,7 +535,6 @@ def get_user_conversations(user_id: int) -> List[Dict]:
     return conversations
 
 def group_conversations_by_date(conversations: List[Dict]) -> Dict[str, List[Dict]]:
-    """Group conversations by Today, Yesterday, and specific dates"""
     now = datetime.now()
     today = now.date()
     yesterday = (now - timedelta(days=1)).date()
@@ -451,18 +555,15 @@ def group_conversations_by_date(conversations: List[Dict]) -> Dict[str, List[Dic
             elif conv_date == yesterday:
                 groups["Yesterday"].append(conv)
             else:
-                # Format date as "Month Day, Year" (e.g., "January 15, 2024")
                 date_str = conv_datetime.strftime("%B %d, %Y")
                 if date_str not in older_dates:
                     older_dates[date_str] = []
                 older_dates[date_str].append(conv)
         except (ValueError, TypeError):
-            # If date parsing fails, put in "Older"
             if "Older" not in older_dates:
                 older_dates["Older"] = []
             older_dates["Older"].append(conv)
     
-    # Merge older dates into groups (sorted by date)
     for date_str in sorted(older_dates.keys(), reverse=True):
         groups[date_str] = older_dates[date_str]
     
@@ -671,7 +772,7 @@ def stream_ai_response(messages: List[Dict], model: str, settings: Dict, api_key
     return full_response
 
 # ========================================
-# UI FUNCTIONS - AUTHENTICATION (Keep existing)
+# UI FUNCTIONS - AUTHENTICATION
 # ========================================
 
 def render_login():
@@ -683,6 +784,11 @@ def render_login():
         
         email = st.text_input("Email", placeholder="your@email.com", key="login_email")
         password = st.text_input("Password", type="password", key="login_password")
+        
+        # Forgot password link
+        if st.button("🔑 Forgot Password?", key="forgot_pwd_link"):
+            st.session_state.show_password_recovery = True
+            st.rerun()
         
         col_a, col_b = st.columns(2)
         
@@ -706,6 +812,88 @@ def render_login():
                 st.session_state.show_signup = True
                 st.rerun()
 
+def render_password_recovery():
+    """Render password recovery page"""
+    col1, col2, col3 = st.columns([1, 2, 1])
+    
+    with col2:
+        st.title("🔑 Password Recovery")
+        
+        tabs = st.tabs(["Security Question", "Recovery Code"])
+        
+        # Security Question Recovery
+        with tabs[0]:
+            st.subheader("Reset via Security Question")
+            
+            email = st.text_input("Email", placeholder="your@email.com", key="recovery_email_sq")
+            
+            if st.button("Get Security Question", key="get_sq_btn"):
+                user_info = get_user_security_info(email)
+                if user_info and user_info.get("security_question"):
+                    st.session_state.recovery_user_info = user_info
+                    st.success("Security question retrieved!")
+                    st.rerun()
+                else:
+                    st.error("Email not found or no security question set")
+            
+            if st.session_state.get('recovery_user_info'):
+                st.info(f"**Security Question:** {st.session_state.recovery_user_info['security_question']}")
+                
+                security_answer = st.text_input("Your Answer", key="security_answer_input")
+                new_password = st.text_input("New Password", type="password", key="new_pwd_sq")
+                confirm_password = st.text_input("Confirm New Password", type="password", key="confirm_pwd_sq")
+                
+                if st.button("Reset Password", type="primary"):
+                    if not all([security_answer, new_password, confirm_password]):
+                        st.error("Please fill all fields")
+                    elif new_password != confirm_password:
+                        st.error("Passwords do not match")
+                    elif len(new_password) < 6:
+                        st.error("Password must be at least 6 characters")
+                    else:
+                        if reset_password_with_security(email, security_answer, new_password):
+                            st.success("✅ Password reset successful! Please sign in.")
+                            st.balloons()
+                            st.session_state.recovery_user_info = None
+                            st.session_state.show_password_recovery = False
+                            st.rerun()
+                        else:
+                            st.error("Incorrect security answer")
+        
+        # Recovery Code Recovery
+        with tabs[1]:
+            st.subheader("Reset via Recovery Code")
+            
+            st.info("💡 Your recovery code was provided when you created your account. Check your saved records.")
+            
+            email_rc = st.text_input("Email", placeholder="your@email.com", key="recovery_email_rc")
+            recovery_code = st.text_input("Recovery Code", placeholder="XXXX-XXXX-XXXX-XXXX", key="recovery_code_input")
+            new_password_rc = st.text_input("New Password", type="password", key="new_pwd_rc")
+            confirm_password_rc = st.text_input("Confirm New Password", type="password", key="confirm_pwd_rc")
+            
+            if st.button("Reset Password with Code", type="primary"):
+                if not all([email_rc, recovery_code, new_password_rc, confirm_password_rc]):
+                    st.error("Please fill all fields")
+                elif new_password_rc != confirm_password_rc:
+                    st.error("Passwords do not match")
+                elif len(new_password_rc) < 6:
+                    st.error("Password must be at least 6 characters")
+                else:
+                    if reset_password_with_recovery_code(email_rc, recovery_code, new_password_rc):
+                        st.success("✅ Password reset successful! Please sign in.")
+                        st.balloons()
+                        st.session_state.show_password_recovery = False
+                        st.rerun()
+                    else:
+                        st.error("Invalid email or recovery code")
+        
+        st.divider()
+        
+        if st.button("← Back to Login"):
+            st.session_state.show_password_recovery = False
+            st.session_state.recovery_user_info = None
+            st.rerun()
+
 def render_signup():
     col1, col2, col3 = st.columns([1, 2, 1])
     
@@ -719,12 +907,28 @@ def render_signup():
         password = st.text_input("Password", type="password", key="signup_password")
         password_confirm = st.text_input("Confirm Password", type="password", key="signup_confirm")
         
+        st.divider()
+        st.subheader("🔒 Account Recovery Setup")
+        
+        security_question = st.selectbox(
+            "Security Question",
+            options=SECURITY_QUESTIONS,
+            key="security_question_select"
+        )
+        
+        security_answer = st.text_input(
+            "Security Answer",
+            placeholder="Enter your answer",
+            key="security_answer_input",
+            help="This will be used to recover your password if you forget it"
+        )
+        
         col_a, col_b = st.columns(2)
         
         with col_a:
             if st.button("✅ Create Account", type="primary", use_container_width=True):
-                if not all([username, email, display_name, password, password_confirm]):
-                    st.error("Please fill all fields")
+                if not all([username, email, display_name, password, password_confirm, security_answer]):
+                    st.error("Please fill all fields including security answer")
                 elif password != password_confirm:
                     st.error("Passwords do not match")
                 elif len(password) < 6:
@@ -733,12 +937,27 @@ def render_signup():
                     st.error("Please enter a valid email address")
                 else:
                     with st.spinner("Creating account..."):
-                        user_id = create_authenticated_user(username, email, display_name, password)
+                        user_id, recovery_code = create_authenticated_user(
+                            username, email, display_name, password, 
+                            security_question, security_answer
+                        )
                         if user_id > 0:
-                            st.success("✅ Account created! Please sign in.")
-                            st.balloons()
-                            st.session_state.show_signup = False
-                            st.rerun()
+                            st.success("✅ Account created successfully!")
+                            
+                            # Show recovery code
+                            if recovery_code:
+                                st.warning("⚠️ **IMPORTANT: Save Your Recovery Code**")
+                                st.markdown(f'<div class="recovery-code-box">{recovery_code}</div>', unsafe_allow_html=True)
+                                st.error("🔴 **Write this code down! You'll need it to recover your password if you forget it.**")
+                                
+                                if st.button("I've Saved My Recovery Code", type="primary"):
+                                    st.balloons()
+                                    st.session_state.show_signup = False
+                                    st.rerun()
+                            else:
+                                st.balloons()
+                                st.session_state.show_signup = False
+                                st.rerun()
         
         with col_b:
             if st.button("← Back to Login", use_container_width=True):
@@ -746,18 +965,16 @@ def render_signup():
                 st.rerun()
 
 # ========================================
-# UI FUNCTIONS - MAIN APP
+# UI FUNCTIONS - MAIN APP (Keep existing with updates)
 # ========================================
 
 def render_header():
-    """Render top header with theme toggle and user avatar dropdown"""
     col1, col2, col3 = st.columns([3, 1, 1])
     
     with col1:
         st.title("🤖 Sagoma AI Chatbot")
     
     with col2:
-        # Theme toggle
         current_theme = st.session_state.get('theme', 'light')
         theme_icon = "🌙" if current_theme == 'light' else "☀️"
         theme_label = "Dark Mode" if current_theme == 'light' else "Light Mode"
@@ -770,30 +987,25 @@ def render_header():
         if st.session_state.authenticated and st.session_state.active_user:
             user = st.session_state.active_user
             
-            # User avatar dropdown using popover
             with st.popover("👤 " + user['display_name'][:10], use_container_width=False):
                 st.markdown(f"### {user['display_name']}")
                 st.markdown(f"*{user.get('email', 'N/A')}*")
                 st.divider()
                 
-                # My Profile
                 if st.button("👤 My Profile", key="profile_btn", use_container_width=True):
                     st.session_state.show_profile = True
                     st.rerun()
                 
-                # Settings
                 if st.button("⚙️ Settings", key="settings_btn_dropdown", use_container_width=True):
                     st.session_state.show_settings = True
                     st.rerun()
                 
-                # API Key
                 if st.button("🔑 API Key", key="api_key_btn_dropdown", use_container_width=True):
                     st.session_state.show_api_key_modal = True
                     st.rerun()
                 
                 st.divider()
                 
-                # Logout
                 if st.button("🚪 Logout", key="logout_btn", use_container_width=True, type="primary"):
                     st.session_state.authenticated = False
                     st.session_state.user_id = None
@@ -803,7 +1015,6 @@ def render_header():
                     st.rerun()
 
 def render_profile():
-    """Render user profile page"""
     if st.session_state.show_profile and st.session_state.active_user:
         user = st.session_state.active_user
         
@@ -831,7 +1042,6 @@ def render_profile():
             st.rerun()
 
 def render_api_key_setup():
-    """Render API key setup screen"""
     st.title("🔑 API Key Setup Required")
     
     st.markdown("""
@@ -847,13 +1057,6 @@ def render_api_key_setup():
     4. Click **"Create Key"**
     5. Copy your API key
     6. Paste it below
-    
-    #### Why OpenRouter?
-    - ✅ Access to 100+ AI models (GPT-4, Claude, Gemini, etc.)
-    - ✅ Pay-as-you-go pricing (no subscription)
-    - ✅ Free credits to start ($1-5 depending on promotions)
-    - ✅ Simple, unified API
-    
     """)
     
     st.divider()
@@ -864,25 +1067,20 @@ def render_api_key_setup():
         placeholder="sk-or-v1-..."
     )
     
-    col1, col2 = st.columns([1, 3])
-    
-    with col1:
-        if st.button("💾 Save Key", type="primary", use_container_width=True):
-            if api_key and api_key.startswith("sk-or-"):
-                update_user_api_key(st.session_state.active_user["user_id"], api_key)
-                st.session_state.active_user["api_key"] = api_key
-                st.session_state.show_api_key_modal = False
-                st.success("API key saved!")
-                st.rerun()
-            else:
-                st.error("Please enter a valid OpenRouter API key (starts with 'sk-or-')")
+    if st.button("💾 Save Key", type="primary"):
+        if api_key and api_key.startswith("sk-or-"):
+            update_user_api_key(st.session_state.active_user["user_id"], api_key)
+            st.session_state.active_user["api_key"] = api_key
+            st.session_state.show_api_key_modal = False
+            st.success("API key saved!")
+            st.rerun()
+        else:
+            st.error("Please enter a valid OpenRouter API key")
 
 def render_sidebar():
-    """Render the sidebar with grouped conversation history"""
     with st.sidebar:
         st.title("💬 Chat History")
         
-        # New chat button
         if st.button("➕ New Chat", use_container_width=True, type="primary"):
             st.session_state.current_conversation = None
             st.session_state.messages = []
@@ -890,10 +1088,8 @@ def render_sidebar():
         
         st.divider()
         
-        # Search conversations
         search_term = st.text_input("🔍 Search conversations", key="search_conv")
         
-        # Display grouped conversations
         if st.session_state.authenticated and st.session_state.active_user:
             conversations = get_user_conversations(st.session_state.active_user["user_id"])
             
@@ -901,12 +1097,10 @@ def render_sidebar():
                 conversations = [c for c in conversations if search_term.lower() in c["title"].lower()]
             
             if conversations:
-                # Group conversations by date
                 grouped_convs = group_conversations_by_date(conversations)
                 
                 for group_name, group_convs in grouped_convs.items():
-                    if group_convs:  # Only show non-empty groups
-                        # Group header
+                    if group_convs:
                         st.markdown(f'<p class="conversation-group-header">{group_name}</p>', unsafe_allow_html=True)
                         
                         for conv in group_convs:
@@ -936,7 +1130,6 @@ def render_sidebar():
                 st.info("No conversations yet. Start a new chat!")
 
 def render_settings():
-    """Render settings modal"""
     if st.session_state.show_settings and st.session_state.active_user:
         user_id = st.session_state.active_user["user_id"]
         settings = get_user_settings(user_id)
@@ -1044,7 +1237,6 @@ def render_settings():
             st.rerun()
 
 def render_chat():
-    """Render main chat interface"""
     if not st.session_state.active_user.get("api_key"):
         if st.session_state.show_api_key_modal:
             render_api_key_setup()
@@ -1065,7 +1257,6 @@ def render_chat():
         render_profile()
         return
     
-    # Model selector
     col1, col2 = st.columns([3, 1])
     
     with col1:
@@ -1087,12 +1278,10 @@ def render_chat():
     
     st.divider()
     
-    # Display chat messages
     for message in st.session_state.messages:
         with st.chat_message(message["role"]):
             st.write(message["content"])
     
-    # Chat input
     if prompt := st.chat_input("Type your message here..."):
         settings = get_user_settings(st.session_state.active_user["user_id"])
         api_key = st.session_state.active_user["api_key"]
@@ -1166,10 +1355,7 @@ def main():
         initial_sidebar_state="expanded"
     )
     
-    # Apply theme
     apply_theme()
-    
-    # Initialize database
     init_database()
     
     # Initialize session state
@@ -1184,6 +1370,12 @@ def main():
     
     if "show_signup" not in st.session_state:
         st.session_state.show_signup = False
+    
+    if "show_password_recovery" not in st.session_state:
+        st.session_state.show_password_recovery = False
+    
+    if "recovery_user_info" not in st.session_state:
+        st.session_state.recovery_user_info = None
     
     if "current_conversation" not in st.session_state:
         st.session_state.current_conversation = None
@@ -1208,7 +1400,9 @@ def main():
     
     # Authentication flow
     if not st.session_state.authenticated:
-        if st.session_state.show_signup:
+        if st.session_state.show_password_recovery:
+            render_password_recovery()
+        elif st.session_state.show_signup:
             render_signup()
         else:
             render_login()
