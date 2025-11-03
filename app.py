@@ -7,7 +7,7 @@ import streamlit as st
 import sqlite3
 import json
 import requests
-from datetime import datetime
+from datetime import datetime, timedelta
 from typing import List, Dict, Optional
 import os
 from pathlib import Path
@@ -19,7 +19,6 @@ try:
 except ImportError:
     import hashlib
     BCRYPT_AVAILABLE = False
-    st.warning("⚠️ bcrypt not available, using fallback password hashing (less secure)")
 
 # ========================================
 # CONFIGURATION
@@ -49,7 +48,116 @@ DB_PATH = Path(__file__).parent / "database" / "conversations.db"
 DB_PATH.parent.mkdir(exist_ok=True)
 
 # ========================================
-# DATABASE FUNCTIONS
+# THEME MANAGEMENT
+# ========================================
+
+def apply_theme():
+    """Apply custom CSS based on theme"""
+    # Get current theme
+    theme = st.session_state.get('theme', 'light')
+    
+    if theme == 'dark':
+        st.markdown("""
+            <style>
+            /* Dark mode styles */
+            .stApp {
+                background-color: #0e1117;
+                color: #fafafa;
+            }
+            [data-testid="stSidebar"] {
+                background-color: #262730;
+            }
+            .stTextInput input, .stTextArea textarea, .stSelectbox select {
+                background-color: #262730;
+                color: #fafafa;
+            }
+            .user-avatar-dropdown {
+                background-color: #262730;
+                color: #fafafa;
+                border: 1px solid #464646;
+            }
+            .conversation-group-header {
+                color: #a0a0a0;
+            }
+            </style>
+        """, unsafe_allow_html=True)
+    else:
+        st.markdown("""
+            <style>
+            /* Light mode styles */
+            .stApp {
+                background-color: #ffffff;
+                color: #31333F;
+            }
+            [data-testid="stSidebar"] {
+                background-color: #f0f2f6;
+            }
+            .user-avatar-dropdown {
+                background-color: #ffffff;
+                color: #31333F;
+                border: 1px solid #e0e0e0;
+            }
+            .conversation-group-header {
+                color: #6e6e6e;
+            }
+            </style>
+        """, unsafe_allow_html=True)
+    
+    # Common styles
+    st.markdown("""
+        <style>
+        /* User avatar styling */
+        .user-avatar-container {
+            position: relative;
+            display: inline-block;
+        }
+        .user-avatar {
+            width: 40px;
+            height: 40px;
+            border-radius: 50%;
+            cursor: pointer;
+            object-fit: cover;
+        }
+        .user-avatar-dropdown {
+            position: absolute;
+            top: 50px;
+            right: 0;
+            min-width: 200px;
+            border-radius: 8px;
+            box-shadow: 0 4px 6px rgba(0,0,0,0.1);
+            padding: 0.5rem;
+            z-index: 1000;
+        }
+        .dropdown-item {
+            padding: 0.75rem 1rem;
+            cursor: pointer;
+            border-radius: 4px;
+            display: flex;
+            align-items: center;
+            gap: 0.5rem;
+            transition: background-color 0.2s;
+        }
+        .dropdown-item:hover {
+            background-color: rgba(0,0,0,0.05);
+        }
+        .conversation-group-header {
+            font-size: 0.75rem;
+            font-weight: 600;
+            text-transform: uppercase;
+            letter-spacing: 0.05em;
+            padding: 0.5rem 0;
+            margin-top: 1rem;
+        }
+        .theme-toggle {
+            padding: 0.5rem;
+            border-radius: 4px;
+            cursor: pointer;
+        }
+        </style>
+    """, unsafe_allow_html=True)
+
+# ========================================
+# DATABASE FUNCTIONS (Keep existing)
 # ========================================
 
 def get_table_columns(cursor, table_name: str) -> list:
@@ -62,14 +170,11 @@ def init_database():
     conn = sqlite3.connect(str(DB_PATH))
     cursor = conn.cursor()
     
-    # Check if users table exists
     cursor.execute("SELECT name FROM sqlite_master WHERE type='table' AND name='users'")
     table_exists = cursor.fetchone() is not None
     
     if table_exists:
-        # Table exists, check and add missing columns
         columns = get_table_columns(cursor, "users")
-        
         migrations = [
             ("email", "ALTER TABLE users ADD COLUMN email TEXT"),
             ("password_hash", "ALTER TABLE users ADD COLUMN password_hash TEXT"),
@@ -83,11 +188,9 @@ def init_database():
                 try:
                     cursor.execute(sql)
                     conn.commit()
-                    print(f"✅ Added {column_name} column")
-                except sqlite3.OperationalError as e:
-                    print(f"⚠️ Error adding {column_name}: {e}")
+                except sqlite3.OperationalError:
+                    pass
     else:
-        # Table doesn't exist, create with all columns
         cursor.execute("""
             CREATE TABLE users (
                 user_id INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -104,7 +207,6 @@ def init_database():
         """)
         conn.commit()
     
-    # Conversations table
     cursor.execute("""
         CREATE TABLE IF NOT EXISTS conversations (
             conversation_id INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -117,7 +219,6 @@ def init_database():
         )
     """)
     
-    # Messages table
     cursor.execute("""
         CREATE TABLE IF NOT EXISTS messages (
             message_id INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -129,7 +230,6 @@ def init_database():
         )
     """)
     
-    # Settings table
     cursor.execute("""
         CREATE TABLE IF NOT EXISTS settings (
             user_id INTEGER PRIMARY KEY,
@@ -147,35 +247,29 @@ def init_database():
     conn.close()
 
 # ========================================
-# AUTHENTICATION FUNCTIONS
+# AUTHENTICATION FUNCTIONS (Keep existing)
 # ========================================
 
 def hash_password(password: str) -> str:
-    """Hash a password using bcrypt or fallback to sha256"""
     if BCRYPT_AVAILABLE:
         salt = bcrypt.gensalt()
         hashed = bcrypt.hashpw(password.encode('utf-8'), salt)
         return hashed.decode('utf-8')
     else:
-        # Fallback to sha256 (less secure but works without bcrypt)
         import hashlib
         return hashlib.sha256(password.encode('utf-8')).hexdigest()
 
 def verify_password(password: str, password_hash: str) -> bool:
-    """Verify a password against its hash"""
     try:
         if BCRYPT_AVAILABLE and password_hash.startswith('$2'):
             return bcrypt.checkpw(password.encode('utf-8'), password_hash.encode('utf-8'))
         else:
-            # Fallback verification
             import hashlib
             return hashlib.sha256(password.encode('utf-8')).hexdigest() == password_hash
-    except Exception as e:
-        st.error(f"Password verification error: {e}")
+    except Exception:
         return False
 
 def create_authenticated_user(username: str, email: str, display_name: str, password: str, avatar_seed: str = None) -> int:
-    """Create a new user with authentication"""
     try:
         conn = sqlite3.connect(str(DB_PATH))
         cursor = conn.cursor()
@@ -186,7 +280,6 @@ def create_authenticated_user(username: str, email: str, display_name: str, pass
         avatar_url = f"https://api.dicebear.com/7.x/avataaars/svg?seed={avatar_seed}"
         password_hash = hash_password(password)
         
-        # Check which columns exist
         columns = get_table_columns(cursor, "users")
         
         if "email" in columns and "password_hash" in columns and "is_active" in columns:
@@ -195,16 +288,13 @@ def create_authenticated_user(username: str, email: str, display_name: str, pass
                 VALUES (?, ?, ?, ?, ?, 1)
             """, (username, email, display_name, avatar_url, password_hash))
         else:
-            # Fallback to basic columns
             cursor.execute("""
                 INSERT INTO users (username, display_name, avatar_url)
                 VALUES (?, ?, ?)
             """, (username, display_name, avatar_url))
-            st.warning("⚠️ Database schema incomplete. Please restart the app to apply migrations.")
         
         user_id = cursor.lastrowid
         
-        # Create default settings
         cursor.execute("""
             INSERT INTO settings (user_id, system_prompt)
             VALUES (?, ?)
@@ -222,8 +312,6 @@ def create_authenticated_user(username: str, email: str, display_name: str, pass
             st.error("Username already exists")
         elif "email" in error_msg:
             st.error("Email already exists")
-        else:
-            st.error(f"Database constraint error: {e}")
         return -1
         
     except Exception as e:
@@ -233,7 +321,6 @@ def create_authenticated_user(username: str, email: str, display_name: str, pass
         return -2
 
 def authenticate_user(email: str, password: str) -> Optional[Dict]:
-    """Authenticate user with email and password"""
     try:
         conn = sqlite3.connect(str(DB_PATH))
         cursor = conn.cursor()
@@ -248,7 +335,6 @@ def authenticate_user(email: str, password: str) -> Optional[Dict]:
         
         if row and row[5]:
             if verify_password(password, row[5]):
-                # Update last login
                 cursor.execute("""
                     UPDATE users SET last_login = CURRENT_TIMESTAMP WHERE user_id = ?
                 """, (row[0],))
@@ -268,14 +354,12 @@ def authenticate_user(email: str, password: str) -> Optional[Dict]:
         conn.close()
         return None
         
-    except Exception as e:
-        st.error(f"Authentication error: {e}")
+    except Exception:
         if conn:
             conn.close()
         return None
 
 def get_user_by_id(user_id: int) -> Optional[Dict]:
-    """Get user by ID"""
     try:
         conn = sqlite3.connect(str(DB_PATH))
         cursor = conn.cursor()
@@ -300,12 +384,10 @@ def get_user_by_id(user_id: int) -> Optional[Dict]:
             }
         return None
         
-    except Exception as e:
-        st.error(f"Get user error: {e}")
+    except Exception:
         return None
 
 def update_user_api_key(user_id: int, api_key: str):
-    """Update user's API key"""
     conn = sqlite3.connect(str(DB_PATH))
     cursor = conn.cursor()
     cursor.execute("UPDATE users SET api_key = ? WHERE user_id = ?", (api_key, user_id))
@@ -313,7 +395,6 @@ def update_user_api_key(user_id: int, api_key: str):
     conn.close()
 
 def update_user_password(user_id: int, new_password: str):
-    """Update user's password"""
     conn = sqlite3.connect(str(DB_PATH))
     cursor = conn.cursor()
     password_hash = hash_password(new_password)
@@ -326,7 +407,6 @@ def update_user_password(user_id: int, new_password: str):
 # ========================================
 
 def get_user_conversations(user_id: int) -> List[Dict]:
-    """Get all conversations for a user"""
     conn = sqlite3.connect(str(DB_PATH))
     cursor = conn.cursor()
     cursor.execute("""
@@ -349,8 +429,46 @@ def get_user_conversations(user_id: int) -> List[Dict]:
     conn.close()
     return conversations
 
+def group_conversations_by_date(conversations: List[Dict]) -> Dict[str, List[Dict]]:
+    """Group conversations by Today, Yesterday, and specific dates"""
+    now = datetime.now()
+    today = now.date()
+    yesterday = (now - timedelta(days=1)).date()
+    
+    groups = {
+        "Today": [],
+        "Yesterday": [],
+    }
+    older_dates = {}
+    
+    for conv in conversations:
+        try:
+            conv_datetime = datetime.fromisoformat(conv["updated_at"])
+            conv_date = conv_datetime.date()
+            
+            if conv_date == today:
+                groups["Today"].append(conv)
+            elif conv_date == yesterday:
+                groups["Yesterday"].append(conv)
+            else:
+                # Format date as "Month Day, Year" (e.g., "January 15, 2024")
+                date_str = conv_datetime.strftime("%B %d, %Y")
+                if date_str not in older_dates:
+                    older_dates[date_str] = []
+                older_dates[date_str].append(conv)
+        except (ValueError, TypeError):
+            # If date parsing fails, put in "Older"
+            if "Older" not in older_dates:
+                older_dates["Older"] = []
+            older_dates["Older"].append(conv)
+    
+    # Merge older dates into groups (sorted by date)
+    for date_str in sorted(older_dates.keys(), reverse=True):
+        groups[date_str] = older_dates[date_str]
+    
+    return groups
+
 def create_conversation(user_id: int, title: str, model: str) -> int:
-    """Create a new conversation"""
     conn = sqlite3.connect(str(DB_PATH))
     cursor = conn.cursor()
     cursor.execute("""
@@ -364,7 +482,6 @@ def create_conversation(user_id: int, title: str, model: str) -> int:
     return conversation_id
 
 def delete_conversation(conversation_id: int):
-    """Delete a conversation and all its messages"""
     conn = sqlite3.connect(str(DB_PATH))
     cursor = conn.cursor()
     
@@ -375,7 +492,6 @@ def delete_conversation(conversation_id: int):
     conn.close()
 
 def get_conversation_messages(conversation_id: int) -> List[Dict]:
-    """Get all messages in a conversation"""
     conn = sqlite3.connect(str(DB_PATH))
     cursor = conn.cursor()
     cursor.execute("""
@@ -393,7 +509,6 @@ def get_conversation_messages(conversation_id: int) -> List[Dict]:
     return messages
 
 def add_message(conversation_id: int, role: str, content: str):
-    """Add a message to a conversation"""
     conn = sqlite3.connect(str(DB_PATH))
     cursor = conn.cursor()
     
@@ -402,7 +517,6 @@ def add_message(conversation_id: int, role: str, content: str):
         VALUES (?, ?, ?)
     """, (conversation_id, role, content))
     
-    # Update conversation timestamp
     cursor.execute("""
         UPDATE conversations
         SET updated_at = CURRENT_TIMESTAMP
@@ -413,7 +527,6 @@ def add_message(conversation_id: int, role: str, content: str):
     conn.close()
 
 def get_user_settings(user_id: int) -> Dict:
-    """Get user settings"""
     conn = sqlite3.connect(str(DB_PATH))
     cursor = conn.cursor()
     cursor.execute("""
@@ -444,11 +557,9 @@ def get_user_settings(user_id: int) -> Dict:
     }
 
 def update_user_settings(user_id: int, settings: Dict):
-    """Update user settings"""
     conn = sqlite3.connect(str(DB_PATH))
     cursor = conn.cursor()
     
-    # Check if settings exist
     cursor.execute("SELECT user_id FROM settings WHERE user_id = ?", (user_id,))
     exists = cursor.fetchone()
     
@@ -489,11 +600,10 @@ def update_user_settings(user_id: int, settings: Dict):
     conn.close()
 
 # ========================================
-# AI API FUNCTIONS
+# AI API FUNCTIONS (Keep existing)
 # ========================================
 
 def call_ai_model(messages: List[Dict], model: str, settings: Dict, api_key: str, stream: bool = True):
-    """Call AI model via OpenRouter"""
     headers = {
         "Authorization": f"Bearer {api_key}",
         "Content-Type": "application/json",
@@ -531,7 +641,6 @@ def call_ai_model(messages: List[Dict], model: str, settings: Dict, api_key: str
         return None
 
 def stream_ai_response(messages: List[Dict], model: str, settings: Dict, api_key: str):
-    """Stream AI response token by token"""
     response = call_ai_model(messages, model, settings, api_key, stream=True)
     
     if response is None:
@@ -562,23 +671,10 @@ def stream_ai_response(messages: List[Dict], model: str, settings: Dict, api_key
     return full_response
 
 # ========================================
-# UI FUNCTIONS - AUTHENTICATION
+# UI FUNCTIONS - AUTHENTICATION (Keep existing)
 # ========================================
 
 def render_login():
-    """Render login page"""
-    st.markdown("""
-        <style>
-        .auth-container {
-            max-width: 400px;
-            margin: 100px auto;
-            padding: 40px;
-            border-radius: 10px;
-            box-shadow: 0 4px 6px rgba(0, 0, 0, 0.1);
-        }
-        </style>
-    """, unsafe_allow_html=True)
-    
     col1, col2, col3 = st.columns([1, 2, 1])
     
     with col2:
@@ -611,7 +707,6 @@ def render_login():
                 st.rerun()
 
 def render_signup():
-    """Render signup page"""
     col1, col2, col3 = st.columns([1, 2, 1])
     
     with col2:
@@ -644,11 +739,6 @@ def render_signup():
                             st.balloons()
                             st.session_state.show_signup = False
                             st.rerun()
-                        elif user_id == -1:
-                            # Error already displayed by create_authenticated_user
-                            pass
-                        else:
-                            st.error("An unexpected error occurred. Please try again.")
         
         with col_b:
             if st.button("← Back to Login", use_container_width=True):
@@ -660,45 +750,85 @@ def render_signup():
 # ========================================
 
 def render_header():
-    """Render top header with user menu"""
-    col1, col2 = st.columns([4, 1])
+    """Render top header with theme toggle and user avatar dropdown"""
+    col1, col2, col3 = st.columns([3, 1, 1])
     
     with col1:
         st.title("🤖 Sagoma AI Chatbot")
     
     with col2:
+        # Theme toggle
+        current_theme = st.session_state.get('theme', 'light')
+        theme_icon = "🌙" if current_theme == 'light' else "☀️"
+        theme_label = "Dark Mode" if current_theme == 'light' else "Light Mode"
+        
+        if st.button(f"{theme_icon} {theme_label}", key="theme_toggle"):
+            st.session_state.theme = 'dark' if current_theme == 'light' else 'light'
+            st.rerun()
+    
+    with col3:
         if st.session_state.authenticated and st.session_state.active_user:
             user = st.session_state.active_user
             
-            # User menu
-            st.markdown(f"""
-                <div style="text-align: right; padding: 10px;">
-                    https://storage.googleapis.com/workspace-0f70711f-8b4e-4d94-86f1-2a93ccde5887/image/54b19a52-a0f2-4805-9068-44620b27f204.png
-                    <span style="margin-left: 10px; font-weight: bold;">{user['display_name']}</span>
-                </div>
-            """, unsafe_allow_html=True)
-            
-            # Dropdown menu
-            menu_col1, menu_col2, menu_col3 = st.columns(3)
-            
-            with menu_col1:
-                if st.button("⚙️", key="settings_header", help="Settings"):
+            # User avatar dropdown using popover
+            with st.popover("👤 " + user['display_name'][:10], use_container_width=False):
+                st.markdown(f"### {user['display_name']}")
+                st.markdown(f"*{user.get('email', 'N/A')}*")
+                st.divider()
+                
+                # My Profile
+                if st.button("👤 My Profile", key="profile_btn", use_container_width=True):
+                    st.session_state.show_profile = True
+                    st.rerun()
+                
+                # Settings
+                if st.button("⚙️ Settings", key="settings_btn_dropdown", use_container_width=True):
                     st.session_state.show_settings = True
                     st.rerun()
-            
-            with menu_col2:
-                if st.button("🔑", key="api_key_header", help="API Key"):
+                
+                # API Key
+                if st.button("🔑 API Key", key="api_key_btn_dropdown", use_container_width=True):
                     st.session_state.show_api_key_modal = True
                     st.rerun()
-            
-            with menu_col3:
-                if st.button("🚪", key="logout_header", help="Logout"):
+                
+                st.divider()
+                
+                # Logout
+                if st.button("🚪 Logout", key="logout_btn", use_container_width=True, type="primary"):
                     st.session_state.authenticated = False
                     st.session_state.user_id = None
                     st.session_state.active_user = None
                     st.session_state.current_conversation = None
                     st.session_state.messages = []
                     st.rerun()
+
+def render_profile():
+    """Render user profile page"""
+    if st.session_state.show_profile and st.session_state.active_user:
+        user = st.session_state.active_user
+        
+        st.title("👤 My Profile")
+        
+        col1, col2 = st.columns([1, 2])
+        
+        with col1:
+            st.image(user["avatar_url"], width=150)
+        
+        with col2:
+            st.markdown(f"### {user['display_name']}")
+            st.markdown(f"**Username:** {user['username']}")
+            st.markdown(f"**Email:** {user.get('email', 'N/A')}")
+            st.markdown(f"**User ID:** {user['user_id']}")
+        
+        st.divider()
+        
+        st.info("💡 To update your profile information, please contact support or create a new account.")
+        
+        st.divider()
+        
+        if st.button("← Back to Chat", type="primary"):
+            st.session_state.show_profile = False
+            st.rerun()
 
 def render_api_key_setup():
     """Render API key setup screen"""
@@ -746,22 +876,9 @@ def render_api_key_setup():
                 st.rerun()
             else:
                 st.error("Please enter a valid OpenRouter API key (starts with 'sk-or-')")
-    
-    with col2:
-        if st.button("ℹ️ More Info", use_container_width=True):
-            st.info("""
-            **OpenRouter Pricing:**
-            - GPT-4o Mini: ~$0.15 per 1M tokens
-            - Claude 3.5 Sonnet: ~$3 per 1M tokens
-            - Gemini Flash: ~$0.075 per 1M tokens
-            
-            **Example costs:**
-            - 100 conversations ≈ $0.50 - $2.00
-            - Most users spend <$5/month
-            """)
 
 def render_sidebar():
-    """Render the sidebar with conversation history"""
+    """Render the sidebar with grouped conversation history"""
     with st.sidebar:
         st.title("💬 Chat History")
         
@@ -776,7 +893,7 @@ def render_sidebar():
         # Search conversations
         search_term = st.text_input("🔍 Search conversations", key="search_conv")
         
-        # Display conversations
+        # Display grouped conversations
         if st.session_state.authenticated and st.session_state.active_user:
             conversations = get_user_conversations(st.session_state.active_user["user_id"])
             
@@ -784,29 +901,37 @@ def render_sidebar():
                 conversations = [c for c in conversations if search_term.lower() in c["title"].lower()]
             
             if conversations:
-                for conv in conversations:
-                    col1, col2 = st.columns([5, 1])
-                    
-                    with col1:
-                        title_display = conv['title'][:30] + "..." if len(conv['title']) > 30 else conv['title']
-                        if st.button(
-                            f"💬 {title_display}",
-                            key=f"conv_{conv['conversation_id']}",
-                            use_container_width=True
-                        ):
-                            st.session_state.current_conversation = conv
-                            st.session_state.messages = get_conversation_messages(conv["conversation_id"])
-                            st.session_state.selected_model = conv["model"]
-                            st.rerun()
-                    
-                    with col2:
-                        if st.button("🗑️", key=f"del_{conv['conversation_id']}"):
-                            delete_conversation(conv["conversation_id"])
-                            if st.session_state.current_conversation and \
-                               st.session_state.current_conversation["conversation_id"] == conv["conversation_id"]:
-                                st.session_state.current_conversation = None
-                                st.session_state.messages = []
-                            st.rerun()
+                # Group conversations by date
+                grouped_convs = group_conversations_by_date(conversations)
+                
+                for group_name, group_convs in grouped_convs.items():
+                    if group_convs:  # Only show non-empty groups
+                        # Group header
+                        st.markdown(f'<p class="conversation-group-header">{group_name}</p>', unsafe_allow_html=True)
+                        
+                        for conv in group_convs:
+                            col1, col2 = st.columns([5, 1])
+                            
+                            with col1:
+                                title_display = conv['title'][:30] + "..." if len(conv['title']) > 30 else conv['title']
+                                if st.button(
+                                    f"💬 {title_display}",
+                                    key=f"conv_{conv['conversation_id']}",
+                                    use_container_width=True
+                                ):
+                                    st.session_state.current_conversation = conv
+                                    st.session_state.messages = get_conversation_messages(conv["conversation_id"])
+                                    st.session_state.selected_model = conv["model"]
+                                    st.rerun()
+                            
+                            with col2:
+                                if st.button("🗑️", key=f"del_{conv['conversation_id']}"):
+                                    delete_conversation(conv["conversation_id"])
+                                    if st.session_state.current_conversation and \
+                                       st.session_state.current_conversation["conversation_id"] == conv["conversation_id"]:
+                                        st.session_state.current_conversation = None
+                                        st.session_state.messages = []
+                                    st.rerun()
             else:
                 st.info("No conversations yet. Start a new chat!")
 
@@ -820,15 +945,13 @@ def render_settings():
         
         tabs = st.tabs(["Chat Behavior", "Account Security"])
         
-        # Chat Behavior Tab
         with tabs[0]:
             st.subheader("🤖 Chatbot Customization")
             
             new_system_prompt = st.text_area(
                 "System Prompt",
                 value=settings.get("system_prompt", "You are a helpful AI assistant."),
-                height=150,
-                help="Define how the AI should behave"
+                height=150
             )
             
             col1, col2 = st.columns(2)
@@ -839,8 +962,7 @@ def render_settings():
                     min_value=0.0,
                     max_value=2.0,
                     value=settings.get("temperature", 0.7),
-                    step=0.1,
-                    help="Controls randomness. Higher = more creative"
+                    step=0.1
                 )
                 
                 new_tone = st.selectbox(
@@ -857,8 +979,7 @@ def render_settings():
                     min_value=100,
                     max_value=4000,
                     value=settings.get("max_tokens", 2000),
-                    step=100,
-                    help="Maximum response length"
+                    step=100
                 )
                 
                 new_verbosity = st.selectbox(
@@ -871,8 +992,7 @@ def render_settings():
             
             new_stream = st.checkbox(
                 "Stream responses",
-                value=settings.get("stream_response", True),
-                help="Show responses as they're generated"
+                value=settings.get("stream_response", True)
             )
             
             if st.button("💾 Save Chat Settings", type="primary"):
@@ -887,7 +1007,6 @@ def render_settings():
                 st.success("Settings saved!")
                 st.rerun()
         
-        # Account Security Tab
         with tabs[1]:
             st.subheader("🔒 Account Security")
             
@@ -912,7 +1031,6 @@ def render_settings():
                 elif len(new_password) < 6:
                     st.error("Password must be at least 6 characters")
                 else:
-                    # Verify current password
                     if authenticate_user(user['email'], current_password):
                         update_user_password(user_id, new_password)
                         st.success("Password updated successfully!")
@@ -927,7 +1045,6 @@ def render_settings():
 
 def render_chat():
     """Render main chat interface"""
-    # Check if API key is configured
     if not st.session_state.active_user.get("api_key"):
         if st.session_state.show_api_key_modal:
             render_api_key_setup()
@@ -942,6 +1059,10 @@ def render_chat():
     
     if st.session_state.show_api_key_modal:
         render_api_key_setup()
+        return
+    
+    if st.session_state.get('show_profile', False):
+        render_profile()
         return
     
     # Model selector
@@ -973,11 +1094,9 @@ def render_chat():
     
     # Chat input
     if prompt := st.chat_input("Type your message here..."):
-        # Get settings
         settings = get_user_settings(st.session_state.active_user["user_id"])
         api_key = st.session_state.active_user["api_key"]
         
-        # Create conversation immediately on first message
         if st.session_state.current_conversation is None:
             title = prompt[:50] if len(prompt) < 50 else prompt[:47] + "..."
             conv_id = create_conversation(
@@ -991,25 +1110,21 @@ def render_chat():
                 "model": st.session_state.selected_model
             }
         
-        # Add user message
         st.session_state.messages.append({"role": "user", "content": prompt})
         add_message(st.session_state.current_conversation["conversation_id"], "user", prompt)
         
         with st.chat_message("user"):
             st.write(prompt)
         
-        # Generate AI response with loading indicator
         with st.chat_message("assistant"):
             message_placeholder = st.empty()
             
-            # Prepare messages for API
             api_messages = [{"role": "system", "content": settings.get("system_prompt", "You are a helpful AI assistant.")}]
             api_messages.extend([
                 {"role": m["role"], "content": m["content"]}
                 for m in st.session_state.messages
             ])
             
-            # Show loading spinner
             with st.spinner("🤖 Sagoma is processing request..."):
                 if settings.get("stream_response", True):
                     full_response = ""
@@ -1034,12 +1149,9 @@ def render_chat():
                     if full_response:
                         message_placeholder.markdown(full_response)
             
-            # Save assistant message
             if full_response:
                 st.session_state.messages.append({"role": "assistant", "content": full_response})
                 add_message(st.session_state.current_conversation["conversation_id"], "assistant", full_response)
-                
-                # Trigger sidebar refresh to show new conversation
                 st.rerun()
 
 # ========================================
@@ -1053,6 +1165,9 @@ def main():
         layout="wide",
         initial_sidebar_state="expanded"
     )
+    
+    # Apply theme
+    apply_theme()
     
     # Initialize database
     init_database()
@@ -1085,6 +1200,12 @@ def main():
     if "show_api_key_modal" not in st.session_state:
         st.session_state.show_api_key_modal = False
     
+    if "show_profile" not in st.session_state:
+        st.session_state.show_profile = False
+    
+    if "theme" not in st.session_state:
+        st.session_state.theme = 'light'
+    
     # Authentication flow
     if not st.session_state.authenticated:
         if st.session_state.show_signup:
@@ -1092,11 +1213,9 @@ def main():
         else:
             render_login()
     else:
-        # Load user data if needed
         if st.session_state.active_user is None and st.session_state.user_id:
             st.session_state.active_user = get_user_by_id(st.session_state.user_id)
         
-        # Render main app
         render_header()
         render_sidebar()
         render_chat()
