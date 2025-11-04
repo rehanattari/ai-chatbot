@@ -1,0 +1,17 @@
+# .github/workflows/keep-alive-simple.yml
+name: Keep Streamlit App Alive (Simple)
+
+on:
+  schedule:
+    - cron: '*/15 * * * *'
+  workflow_dispatch:
+
+jobs:
+  ping:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Ping App
+        run: |
+          curl -f -s -o /dev/null "${{ secrets.STREAMLIT_CHATBOT_REHAN_APP }}" && \
+            echo "✅ App pinged successfully" || \
+            echo "⚠️  Ping failed"
