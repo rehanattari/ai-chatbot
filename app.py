@@ -269,7 +269,7 @@ def init_database():
                 username TEXT UNIQUE NOT NULL,
                 display_name TEXT NOT NULL,
                 avatar_url TEXT,
-                email TEXT,
+                email TEXT UNIQUE,
                 password_hash TEXT,
                 is_active INTEGER DEFAULT 1,
                 last_login TIMESTAMP,
@@ -308,32 +308,7 @@ def init_database():
         )
     """)
     
-    # Insert default API key if none exists
-    cursor.execute("SELECT COUNT(*) FROM api_keys WHERE is_active = 1")
-    if cursor.fetchone()[0] == 0:
-        cursor.execute("""
-            INSERT INTO api_keys (key_name, key_value, is_active)
-            VALUES (?, ?, 1)
-        """, ("OpenRouter Default", DEFAULT_API_KEY))
-        conn.commit()
-    
-    # Create admin account if doesn't exist
-    cursor.execute("SELECT COUNT(*) FROM users WHERE email = ?", (ADMIN_EMAIL,))
-    if cursor.fetchone()[0] == 0:
-        admin_password_hash = hash_data(ADMIN_PASSWORD)
-        cursor.execute("""
-            INSERT INTO users (username, email, display_name, avatar_url, password_hash, role, is_active)
-            VALUES (?, ?, ?, ?, ?, 'admin', 1)
-        """, ("admin", ADMIN_EMAIL, "Admin", "https://api.dicebear.com/7.x/avataaars/svg?seed=admin", admin_password_hash))
-        
-        admin_id = cursor.lastrowid
-        cursor.execute("""
-            INSERT INTO settings (user_id, system_prompt)
-            VALUES (?, ?)
-        """, (admin_id, "You are a helpful AI assistant."))
-        conn.commit()
-    
-    # Conversations, Messages, Settings tables (keep existing)
+    # Conversations, Messages, Settings tables
     cursor.execute("""
         CREATE TABLE IF NOT EXISTS conversations (
             conversation_id INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -371,6 +346,47 @@ def init_database():
     """)
     
     conn.commit()
+    
+    # Insert default API key if none exists
+    cursor.execute("SELECT COUNT(*) FROM api_keys WHERE is_active = 1")
+    if cursor.fetchone()[0] == 0:
+        cursor.execute("""
+            INSERT INTO api_keys (key_name, key_value, is_active)
+            VALUES (?, ?, 1)
+        """, ("OpenRouter Default", DEFAULT_API_KEY))
+        conn.commit()
+    
+    # Create admin account if doesn't exist
+    cursor.execute("SELECT user_id FROM users WHERE email = ?", (ADMIN_EMAIL,))
+    existing_admin = cursor.fetchone()
+    
+    if not existing_admin:
+        admin_password_hash = hash_data(ADMIN_PASSWORD)
+        cursor.execute("""
+            INSERT INTO users (username, email, display_name, avatar_url, password_hash, role, is_active)
+            VALUES (?, ?, ?, ?, ?, 'admin', 1)
+        """, ("admin", ADMIN_EMAIL, "Admin", "https://api.dicebear.com/7.x/avataaars/svg?seed=admin", admin_password_hash))
+        
+        admin_id = cursor.lastrowid
+        
+        # Check if settings already exist for this admin
+        cursor.execute("SELECT user_id FROM settings WHERE user_id = ?", (admin_id,))
+        if not cursor.fetchone():
+            cursor.execute("""
+                INSERT INTO settings (user_id, system_prompt)
+                VALUES (?, ?)
+            """, (admin_id, "You are a helpful AI assistant."))
+        
+        # Check if subscription already exists for this admin
+        cursor.execute("SELECT subscription_id FROM subscriptions WHERE user_id = ?", (admin_id,))
+        if not cursor.fetchone():
+            cursor.execute("""
+                INSERT INTO subscriptions (user_id, plan_type, price, is_active)
+                VALUES (?, 'plus', 0, 1)
+            """, (admin_id,))
+        
+        conn.commit()
+    
     conn.close()
 
 # ========================================
