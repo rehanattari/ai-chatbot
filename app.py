@@ -313,7 +313,7 @@ def init_database():
         )
     """)
     
-    # Conversations, Messages, Settings tables
+    # Conversations table
     cursor.execute("""
         CREATE TABLE IF NOT EXISTS conversations (
             conversation_id INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -326,6 +326,7 @@ def init_database():
         )
     """)
     
+    # Messages table
     cursor.execute("""
         CREATE TABLE IF NOT EXISTS messages (
             message_id INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -337,6 +338,7 @@ def init_database():
         )
     """)
     
+    # Settings table
     cursor.execute("""
         CREATE TABLE IF NOT EXISTS settings (
             user_id INTEGER PRIMARY KEY,
@@ -360,7 +362,7 @@ def init_database():
             VALUES (?, ?, 1)
         """, ("OpenRouter Default", DEFAULT_API_KEY))
         conn.commit()
-        
+    
     conn.close()
     
     # ALWAYS ensure admin account exists (runs every time)
@@ -403,7 +405,7 @@ def ensure_admin_account():
         admin_id = cursor.lastrowid
         conn.commit()
     
-    # Ensure admin has settings
+    # Ensure admin has settings (for both existing and new admin)
     cursor.execute("SELECT user_id FROM settings WHERE user_id = ?", (admin_id,))
     if not cursor.fetchone():
         cursor.execute("""
@@ -412,7 +414,7 @@ def ensure_admin_account():
         """, (admin_id, "You are a helpful AI assistant."))
         conn.commit()
     
-    # Ensure admin has subscription
+    # Ensure admin has subscription (for both existing and new admin)
     cursor.execute("SELECT subscription_id FROM subscriptions WHERE user_id = ? AND is_active = 1", (admin_id,))
     if not cursor.fetchone():
         cursor.execute("""
@@ -422,7 +424,6 @@ def ensure_admin_account():
         conn.commit()
     
     conn.close()
-
 # ========================================
 # SUBSCRIPTION FUNCTIONS
 # ========================================
