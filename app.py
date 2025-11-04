@@ -553,6 +553,20 @@ def create_authenticated_user(username: str, email: str, display_name: str, pass
         conn = sqlite3.connect(str(DB_PATH))
         cursor = conn.cursor()
         
+        # Check if username already exists
+        cursor.execute("SELECT user_id FROM users WHERE username = ?", (username,))
+        if cursor.fetchone():
+            conn.close()
+            st.error("❌ Username already exists")
+            return -1, None
+        
+        # Check if email already exists
+        cursor.execute("SELECT user_id FROM users WHERE email = ?", (email,))
+        if cursor.fetchone():
+            conn.close()
+            st.error("❌ Email already exists")
+            return -1, None
+        
         if not avatar_seed:
             avatar_seed = username
         
@@ -593,15 +607,17 @@ def create_authenticated_user(username: str, email: str, display_name: str, pass
             conn.close()
         error_msg = str(e).lower()
         if "username" in error_msg:
-            st.error("Username already exists")
+            st.error("❌ Username already exists")
         elif "email" in error_msg:
-            st.error("Email already exists")
+            st.error("❌ Email already exists")
+        else:
+            st.error(f"❌ Database error: {e}")
         return -1, None
         
     except Exception as e:
         if conn:
             conn.close()
-        st.error(f"Error creating user: {str(e)}")
+        st.error(f"❌ Error creating user: {str(e)}")
         return -2, None
 
 def authenticate_user(email: str, password: str) -> Optional[Dict]:
