@@ -95,9 +95,14 @@ SECURITY_QUESTIONS = [
     "What is the name of your elementary school?",
 ]
 
-# Admin credentials (default admin account)
-ADMIN_EMAIL = "admin@sagoma.ai"
-ADMIN_PASSWORD = "Admin@2024"  # Change this after first login!
+# Admin credentials (PERSISTENT - stored in environment or code)
+# Option 1: Use environment variables (recommended for production)
+ADMIN_EMAIL = os.getenv("ADMIN_EMAIL", "admin@sagoma.ai")
+ADMIN_PASSWORD = os.getenv("ADMIN_PASSWORD", "Admin@2024")
+
+# Option 2: Hardcoded fallback (always works)
+FALLBACK_ADMIN_EMAIL = "admin@sagoma.ai"
+FALLBACK_ADMIN_PASSWORD = "Admin@2024"
 
 # Database path
 DB_PATH = Path(__file__).parent / "database" / "conversations.db"
@@ -355,36 +360,64 @@ def init_database():
             VALUES (?, ?, 1)
         """, ("OpenRouter Default", DEFAULT_API_KEY))
         conn.commit()
+     conn.close()
     
-    # Create admin account if doesn't exist
-    cursor.execute("SELECT user_id FROM users WHERE email = ?", (ADMIN_EMAIL,))
-    existing_admin = cursor.fetchone()
+    # ALWAYS ensure admin account exists (runs every time)
+    ensure_admin_account()
+
+def ensure_admin_account():
+    """Ensure admin account always exists - runs on every app start"""
+    conn = sqlite3.connect(str(DB_PATH))
+    cursor = conn.cursor()
     
-    if not existing_admin:
+    # Try to find admin by email
+    cursor.execute("SELECT user_id, password_hash, role FROM users WHERE email = ?", (ADMIN_EMAIL,))
+    admin_row = cursor.fetchone()
+    
+    if admin_row:
+        admin_id = admin_row[0]
+        
+        # Update role to admin if it's not (in case it was changed)
+        if admin_row[2] != 'admin':
+            cursor.execute("UPDATE users SET role = 'admin' WHERE user_id = ?", (admin_id,))
+            conn.commit()
+        
+        # Verify password is correct (update if changed in config)
+        current_hash = admin_row[1]
+        expected_hash = hash_data(ADMIN_PASSWORD)
+        
+        # If password in code changed, update database
+        if not verify_hashed_data(ADMIN_PASSWORD, current_hash):
+            cursor.execute("UPDATE users SET password_hash = ? WHERE user_id = ?", (expected_hash, admin_id))
+            conn.commit()
+    
+    else:
+        # Admin doesn't exist, create it
         admin_password_hash = hash_data(ADMIN_PASSWORD)
         cursor.execute("""
             INSERT INTO users (username, email, display_name, avatar_url, password_hash, role, is_active)
             VALUES (?, ?, ?, ?, ?, 'admin', 1)
-        """, ("admin", ADMIN_EMAIL, "Admin", "https://api.dicebear.com/7.x/avataaars/svg?seed=admin", admin_password_hash))
+        """, ("admin", ADMIN_EMAIL, "System Administrator", "https://api.dicebear.com/7.x/avataaars/svg?seed=admin", admin_password_hash))
         
         admin_id = cursor.lastrowid
-        
-        # Check if settings already exist for this admin
-        cursor.execute("SELECT user_id FROM settings WHERE user_id = ?", (admin_id,))
-        if not cursor.fetchone():
-            cursor.execute("""
-                INSERT INTO settings (user_id, system_prompt)
-                VALUES (?, ?)
-            """, (admin_id, "You are a helpful AI assistant."))
-        
-        # Check if subscription already exists for this admin
-        cursor.execute("SELECT subscription_id FROM subscriptions WHERE user_id = ?", (admin_id,))
-        if not cursor.fetchone():
-            cursor.execute("""
-                INSERT INTO subscriptions (user_id, plan_type, price, is_active)
-                VALUES (?, 'plus', 0, 1)
-            """, (admin_id,))
-        
+        conn.commit()
+    
+    # Ensure admin has settings
+    cursor.execute("SELECT user_id FROM settings WHERE user_id = ?", (admin_id,))
+    if not cursor.fetchone():
+        cursor.execute("""
+            INSERT INTO settings (user_id, system_prompt)
+            VALUES (?, ?)
+        """, (admin_id, "You are a helpful AI assistant."))
+        conn.commit()
+    
+    # Ensure admin has subscription
+    cursor.execute("SELECT subscription_id FROM subscriptions WHERE user_id = ? AND is_active = 1", (admin_id,))
+    if not cursor.fetchone():
+        cursor.execute("""
+            INSERT INTO subscriptions (user_id, plan_type, price, is_active)
+            VALUES (?, 'plus', 0, 1)
+        """, (admin_id,))
         conn.commit()
     
     conn.close()
