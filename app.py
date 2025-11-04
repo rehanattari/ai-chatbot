@@ -361,7 +361,7 @@ def init_database():
         """, ("OpenRouter Default", DEFAULT_API_KEY))
         conn.commit()
         
-     conn.close()
+    conn.close()
     
     # ALWAYS ensure admin account exists (runs every time)
     ensure_admin_account()
