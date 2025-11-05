@@ -1022,10 +1022,17 @@ def call_ai_model(messages: List[Dict], model: str, settings: Dict, stream: bool
     """Call AI model using system API key"""
     api_key = get_active_api_key()
     
+    # Check if API key is set
+    if api_key == "sk-or-v1-YOUR_API_KEY_HERE" or not api_key:
+        st.error("🔑 **API Key Not Configured**")
+        st.warning("⚠️ Admin needs to configure a valid OpenRouter API key in the Admin Dashboard.")
+        st.info("💡 Login as admin (admin@sagoma.ai) → Admin Dashboard → API Keys")
+        return None
+    
     headers = {
         "Authorization": f"Bearer {api_key}",
         "Content-Type": "application/json",
-        "HTTP-Referer": "https://github.com/yourusername/ai-chatbot",
+        "HTTP-Referer": "https://sagoma-ai-chatbot.streamlit.app",
         "X-Title": "Sagoma AI Chatbot"
     }
     
@@ -1054,8 +1061,24 @@ def call_ai_model(messages: List[Dict], model: str, settings: Dict, stream: bool
             data = response.json()
             return data["choices"][0]["message"]["content"]
             
+    except requests.exceptions.HTTPError as e:
+        if e.response.status_code == 401:
+            st.error("🔑 **API Key Invalid or Expired**")
+            st.warning("⚠️ Admin needs to update the OpenRouter API key in Admin Dashboard.")
+            st.info("💡 Get a new key from: https://openrouter.ai/keys")
+        elif e.response.status_code == 402:
+            st.error("💳 **Payment Required**")
+            st.warning("⚠️ OpenRouter account has insufficient credits.")
+            st.info("💡 Admin: Add credits at https://openrouter.ai/")
+        elif e.response.status_code == 429:
+            st.error("⏱️ **Rate Limit Exceeded**")
+            st.warning("⚠️ Too many requests. Please wait a moment and try again.")
+        else:
+            st.error(f"API Error: {str(e)}")
+        return None
+        
     except requests.exceptions.RequestException as e:
-        st.error(f"API Error: {str(e)}")
+        st.error(f"Network Error: {str(e)}")
         return None
 
 def stream_ai_response(messages: List[Dict], model: str, settings: Dict):
