@@ -1306,7 +1306,17 @@ def render_signup():
 
 def render_subscription_page():
     """Render subscription plans page"""
-    st.title("💎 Choose Your Plan")
+    col1, col2 = st.columns([4, 1])
+    
+    with col1:
+        st.title("💎 Choose Your Plan")
+    
+    with col2:
+        if st.button("✖️ Close", key="close_sub_btn"):
+            st.session_state.show_subscriptions = False
+            st.rerun()
+    
+    st.divider()
     
     st.info("🚧 **We're working on premium features!** They will be available soon. For now, enjoy the Free plan.")
     
@@ -1362,23 +1372,28 @@ def render_subscription_page():
             
             st.markdown('</div>', unsafe_allow_html=True)
     
-    st.divider()
-    
-    if st.button("← Back to Chat"):
-        st.session_state.show_subscriptions = False
-        st.rerun()
-
 # ========================================
 # UI FUNCTIONS - ADMIN DASHBOARD
 # ========================================
 
 def render_admin_dashboard():
     """Render admin dashboard"""
-    st.title("🔧 Admin Dashboard")
+    # Add back button at the top
+    col1, col2 = st.columns([4, 1])
+    
+    with col1:
+        st.title("🔧 Admin Dashboard")
+    
+    with col2:
+        if st.button("← Back to Chat", key="admin_back_btn", type="primary"):
+            st.session_state.show_admin = False
+            st.rerun()
     
     if not st.session_state.get('is_admin', False):
         st.error("Access Denied: Admin privileges required")
         return
+    
+    st.divider()
     
     tabs = st.tabs(["📊 Overview", "🔑 API Keys", "👥 User Management", "💎 Subscriptions"])
     
@@ -1560,38 +1575,67 @@ def render_header():
                 # Admin Dashboard (only for admins)
                 if st.session_state.get('is_admin', False):
                     if st.button("🔧 Admin Dashboard", key="admin_dashboard_btn", use_container_width=True):
-                        st.session_state.show_admin = True
-                        st.rerun()
+                    # Close other modals when opening admin dashboard
+                    st.session_state.show_profile = False
+                    st.session_state.show_settings = False
+                    st.session_state.show_subscriptions = False
+                    st.session_state.show_admin = True
+                    st.rerun()
                     st.divider()
                 
                 if st.button("👤 My Profile", key="profile_btn", use_container_width=True):
+                    # Close other modals
+                    st.session_state.show_admin = False
+                    st.session_state.show_settings = False
+                    st.session_state.show_subscriptions = False
                     st.session_state.show_profile = True
                     st.rerun()
                 
                 if st.button("💎 Subscriptions", key="subscriptions_btn", use_container_width=True):
+                    # Close other modals
+                    st.session_state.show_admin = False
+                    st.session_state.show_profile = False
+                    st.session_state.show_settings = False
                     st.session_state.show_subscriptions = True
                     st.rerun()
                 
                 if st.button("⚙️ Settings", key="settings_btn_dropdown", use_container_width=True):
+                    # Close other modals
+                    st.session_state.show_admin = False
+                    st.session_state.show_profile = False
+                    st.session_state.show_subscriptions = False
                     st.session_state.show_settings = True
                     st.rerun()
                 
                 st.divider()
                 
                 if st.button("🚪 Logout", key="logout_btn", use_container_width=True, type="primary"):
+                    # Reset ALL session state on logout
                     st.session_state.authenticated = False
                     st.session_state.user_id = None
                     st.session_state.active_user = None
                     st.session_state.is_admin = False
                     st.session_state.current_conversation = None
                     st.session_state.messages = []
+                    st.session_state.show_admin = False
+                    st.session_state.show_profile = False
+                    st.session_state.show_settings = False
+                    st.session_state.show_subscriptions = False
                     st.rerun()
 
 def render_profile():
     if st.session_state.show_profile and st.session_state.active_user:
         user = st.session_state.active_user
         
-        st.title("👤 My Profile")
+        col1, col2 = st.columns([4, 1])
+        with col1:
+            st.title("👤 My Profile")
+        with col2:
+            if st.button("✖️ Close", key="close_profile_btn"):
+                st.session_state.show_profile = False
+                st.rerun()
+        
+        st.divider()
         
         col1, col2 = st.columns([1, 2])
         
@@ -1613,10 +1657,6 @@ def render_profile():
         
         st.divider()
         
-        if st.button("← Back to Chat", type="primary"):
-            st.session_state.show_profile = False
-            st.rerun()
-
 def render_sidebar():
     with st.sidebar:
         st.title("💬 Chat History")
