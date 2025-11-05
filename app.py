@@ -262,17 +262,19 @@ def init_database():
     conn = sqlite3.connect(str(DB_PATH))
     cursor = conn.cursor()
     
-    # Create or migrate users table
+    # Migrate users table
     cursor.execute("SELECT name FROM sqlite_master WHERE type='table' AND name='users'")
     if cursor.fetchone():
         columns = get_table_columns(cursor, "users")
         for col, sql in [
             ("email", "ALTER TABLE users ADD COLUMN email TEXT"),
             ("password_hash", "ALTER TABLE users ADD COLUMN password_hash TEXT"),
-            ("role", "ALTER TABLE users ADD COLUMN role TEXT DEFAULT 'user'"),
+            ("is_active", "ALTER TABLE users ADD COLUMN is_active INTEGER DEFAULT 1"),
+            ("last_login", "ALTER TABLE users ADD COLUMN last_login TIMESTAMP"),
             ("security_question", "ALTER TABLE users ADD COLUMN security_question TEXT"),
             ("security_answer_hash", "ALTER TABLE users ADD COLUMN security_answer_hash TEXT"),
             ("recovery_code_hash", "ALTER TABLE users ADD COLUMN recovery_code_hash TEXT"),
+            ("role", "ALTER TABLE users ADD COLUMN role TEXT DEFAULT 'user'"),
         ]:
             if col not in columns:
                 try:
@@ -299,6 +301,23 @@ def init_database():
             )
         """)
         conn.commit()
+    
+    # Migrate messages table BEFORE creating (for existing databases)
+    cursor.execute("SELECT name FROM sqlite_master WHERE type='table' AND name='messages'")
+    if cursor.fetchone():
+        msg_columns = get_table_columns(cursor, "messages")
+        if "file_attachment" not in msg_columns:
+            try:
+                cursor.execute("ALTER TABLE messages ADD COLUMN file_attachment TEXT")
+                conn.commit()
+            except:
+                pass
+        if "image_url" not in msg_columns:
+            try:
+                cursor.execute("ALTER TABLE messages ADD COLUMN image_url TEXT")
+                conn.commit()
+            except:
+                pass
     
     # Create other tables
     for table_sql in [
