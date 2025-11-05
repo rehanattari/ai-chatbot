@@ -1575,13 +1575,13 @@ def render_header():
                 # Admin Dashboard (only for admins)
                 if st.session_state.get('is_admin', False):
                     if st.button("🔧 Admin Dashboard", key="admin_dashboard_btn", use_container_width=True):
-                    # Close other modals when opening admin dashboard
-                    st.session_state.show_profile = False
-                    st.session_state.show_settings = False
-                    st.session_state.show_subscriptions = False
-                    st.session_state.show_admin = True
-                    st.rerun()
-                st.divider()
+                        # Close other modals when opening admin dashboard
+                        st.session_state.show_profile = False
+                        st.session_state.show_settings = False
+                        st.session_state.show_subscriptions = False
+                        st.session_state.show_admin = True
+                        st.rerun()
+                    st.divider()
                 
                 if st.button("👤 My Profile", key="profile_btn", use_container_width=True):
                     # Close other modals
