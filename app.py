@@ -1581,7 +1581,7 @@ def render_header():
                     st.session_state.show_subscriptions = False
                     st.session_state.show_admin = True
                     st.rerun()
-                    st.divider()
+                st.divider()
                 
                 if st.button("👤 My Profile", key="profile_btn", use_container_width=True):
                     # Close other modals
