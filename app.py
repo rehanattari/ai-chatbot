@@ -783,22 +783,52 @@ def delete_conversation(conversation_id: int):
 def get_conversation_messages(conversation_id: int) -> List[Dict]:
     conn = sqlite3.connect(str(DB_PATH))
     cursor = conn.cursor()
-    cursor.execute("""
-        SELECT role, content, file_attachment, image_url, timestamp
-        FROM messages WHERE conversation_id = ? ORDER BY timestamp ASC
-    """, (conversation_id,))
-    msgs = [{"role": r[0], "content": r[1], "file_attachment": r[2], 
-             "image_url": r[3], "timestamp": r[4]} for r in cursor.fetchall()]
+    
+    # Check if new columns exist
+    columns = get_table_columns(cursor, "messages")
+    has_file_col = "file_attachment" in columns
+    has_image_col = "image_url" in columns
+    
+    if has_file_col and has_image_col:
+        cursor.execute("""
+            SELECT role, content, file_attachment, image_url, timestamp
+            FROM messages WHERE conversation_id = ? ORDER BY timestamp ASC
+        """, (conversation_id,))
+        msgs = [{"role": r[0], "content": r[1], "file_attachment": r[2], 
+                 "image_url": r[3], "timestamp": r[4]} for r in cursor.fetchall()]
+    else:
+        # Fallback for old schema
+        cursor.execute("""
+            SELECT role, content, timestamp
+            FROM messages WHERE conversation_id = ? ORDER BY timestamp ASC
+        """, (conversation_id,))
+        msgs = [{"role": r[0], "content": r[1], "file_attachment": None, 
+                 "image_url": None, "timestamp": r[2]} for r in cursor.fetchall()]
+    
     conn.close()
     return msgs
 
 def add_message(conversation_id: int, role: str, content: str, file_attachment: str = None, image_url: str = None):
     conn = sqlite3.connect(str(DB_PATH))
     cursor = conn.cursor()
-    cursor.execute("""
-        INSERT INTO messages (conversation_id, role, content, file_attachment, image_url)
-        VALUES (?, ?, ?, ?, ?)
-    """, (conversation_id, role, content, file_attachment, image_url))
+    
+    # Check if new columns exist
+    columns = get_table_columns(cursor, "messages")
+    has_file_col = "file_attachment" in columns
+    has_image_col = "image_url" in columns
+    
+    if has_file_col and has_image_col:
+        cursor.execute("""
+            INSERT INTO messages (conversation_id, role, content, file_attachment, image_url)
+            VALUES (?, ?, ?, ?, ?)
+        """, (conversation_id, role, content, file_attachment, image_url))
+    else:
+        # Fallback for old schema
+        cursor.execute("""
+            INSERT INTO messages (conversation_id, role, content)
+            VALUES (?, ?, ?)
+        """, (conversation_id, role, content))
+    
     cursor.execute("UPDATE conversations SET updated_at = CURRENT_TIMESTAMP WHERE conversation_id = ?",
                   (conversation_id,))
     conn.commit()
